@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum tokens { error, eof, equal, isequal };
+enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal };
 
 typedef char STATUS;
 
@@ -49,6 +49,55 @@ TOKEN Lex() {
 
 			TOKEN token;
 			token.token = equal;
+			token.symtable = (void*) 0;
+			return token;
+		}
+	}
+
+	if (c == '!') {
+		char next = fgetc(file);
+		if (next == '=') {
+			TOKEN token;
+			token.token = isnequal;
+			token.symtable = (void*) 0;
+			return token;
+		} else {
+			TOKEN token;
+			token.token = error;
+			token.symtable = (void*) 0;
+			return token;
+		}
+	}
+
+	if (c == '>') {
+		char next = fgetc(file);
+		if (next == '=') {
+			TOKEN token;
+			token.token = greater_equal;
+			token.symtable = (void*) 0;
+			return token;
+		} else {
+			fseek(file, -1, SEEK_CUR);
+
+			TOKEN token;
+			token.token = greater;
+			token.symtable = (void*) 0;
+			return token;
+		}
+	}
+
+	if (c == '<') {
+		char next = fgetc(file);
+		if (next == '=') {
+			TOKEN token;
+			token.token = lesser_equal;
+			token.symtable = (void*) 0;
+			return token;
+		} else {
+			fseek(file, -1, SEEK_CUR);
+
+			TOKEN token;
+			token.token = lesser;
 			token.symtable = (void*) 0;
 			return token;
 		}
