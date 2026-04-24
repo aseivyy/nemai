@@ -1,8 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
-enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal };
+enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, number };
 
 typedef char STATUS;
 
@@ -19,10 +18,27 @@ typedef struct symtableEntry_s {
 	struct symtableEntry_s *next;
 } symtableEntry;
 
+typedef struct lextableEntry_s {
+	char* name;
+	int id;
+	struct symtableEntry_s *next;
+} lextableEntry;
+
+int c_id = 0;
+
 #define ERROR 1
 #define SUCCESS 0
 
 FILE *file;
+
+char isNum(char c) {
+	if (c == '0' || c == '1' || c == '2' || c == '3' || c == '4' || c == '5' || c == '6' || c == '7' || c == '8' || c == '9') return 1;
+	return 0;
+}
+
+int charToNum(char c) {
+	return c - '0';
+}
 
 TOKEN Lex() {
 	char c;
@@ -102,8 +118,27 @@ TOKEN Lex() {
 			return token;
 		}
 	}
+
+	if (isNum(c) == 1) {
+		int num = charToNum(c);
+		char next = fgetc(file);
+		
+		while (isNum(next) == 1) {
+			num *= 10;
+			num += charToNum(next);
+			next = fgetc(file);
+		}
+		fseek(file, -1, SEEK_CUR);
+		printf("\nThe number %d\n\n", num);
+
+		TOKEN token;
+		token.token = number;
+		token.symtable = (int*) malloc(sizeof(int));
+		*((int*) token.symtable) = num;
+		return token;
+	}
 	
-	printf("%c", c);
+	printf("Char not able to process: %c", c);
 
 	TOKEN token;
 	token.token = error;
@@ -150,7 +185,8 @@ int main(int argc, char **argv) {
 	}
 
 	TOKEN test = Lex();
-	printf("%d ", test.token);
+	printf("\n%d ", test.token);
+	printf("\nThe number readen is %d\n", (int) *((int*) test.symtable));
 	test = Lex();
 	printf("%d ", test.token);
 	test = Lex();
