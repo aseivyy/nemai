@@ -1,7 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
-enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, number };
+enum tokens { error, eof, eoc, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, obracket_body, cbracket_body, obracket_param, cbracket_param, add, sub, mult, divide, number, word, kif, kfi };
 
 typedef char STATUS;
 
@@ -38,6 +39,17 @@ char isNum(char c) {
 
 int charToNum(char c) {
 	return c - '0';
+}
+
+char isLetter(char c) {
+	if ((c >= 'a' && c <= 'z') || (c >= 'A' &&  c <= 'Z') || c == '_' || c == '^') return 1;
+	return 0;
+}
+
+enum tokens isKeyword(char *s) {
+	if (strcmp(s, "if") == 0) return kif;
+	if (strcmp(s, "fi") == 0) return kfi;
+	return word;
 }
 
 TOKEN Lex() {
@@ -119,6 +131,69 @@ TOKEN Lex() {
 		}
 	}
 
+	if (c == '(') {
+		TOKEN token;
+		token.token = obracket_param;
+		token.symtable = (void*) 0;
+		return token;
+	}
+
+	if (c == ')') {
+		TOKEN token;
+		token.token = cbracket_param;
+		token.symtable = (void*) 0;
+		return token;
+	}
+
+	if (c == '[') {
+		TOKEN token;
+		token.token = obracket_body;
+		token.symtable = (void*) 0;
+		return token;
+	}
+
+	if (c == ']') {
+		TOKEN token;
+		token.token = cbracket_body;
+		token.symtable = (void*) 0;
+		return token;
+	}
+
+	if (c == ';') {
+		TOKEN token;
+		token.token = eoc;
+		token.symtable = (void*) 0;
+		return token;
+	}
+
+	if (c == '+') {
+		TOKEN token;
+		token.token = add;
+		token.symtable = (void*) 0;
+		return token;
+	}
+
+	if (c == '-') {
+		TOKEN token;
+		token.token = sub;
+		token.symtable = (void*) 0;
+		return token;
+	}
+
+	if (c == '*') {
+		TOKEN token;
+		token.token = mult;
+		token.symtable = (void*) 0;
+		return token;
+	}
+
+	if (c == '/') {
+		TOKEN token;
+		token.token = divide;
+		token.symtable = (void*) 0;
+		return token;
+	}
+
 	if (isNum(c) == 1) {
 		int num = charToNum(c);
 		char next = fgetc(file);
@@ -129,13 +204,48 @@ TOKEN Lex() {
 			next = fgetc(file);
 		}
 		fseek(file, -1, SEEK_CUR);
-		printf("\nThe number %d\n\n", num);
 
 		TOKEN token;
 		token.token = number;
 		token.symtable = (int*) malloc(sizeof(int));
 		*((int*) token.symtable) = num;
 		return token;
+	}
+
+	if (isLetter(c) == 1) {
+		char *read = (char*) malloc(sizeof(char));
+		read[0] = c;
+		int letters = 1;
+		
+		c = fgetc(file);
+
+		while (isLetter(c) == 1 || isNum(c) == 1) {
+			letters++;
+			read = (char*) realloc(read, letters);
+			read[letters - 1] = c;
+
+			c = fgetc(file);
+		}
+
+		letters++;
+		read = (char*) realloc(read, letters);
+		read[letters - 1] = '\0';
+
+		fseek(file, -1, SEEK_CUR);
+
+		enum tokens check = isKeyword(read);
+		if (check == word) {
+			TOKEN token;
+			token.token = word;
+			token.symtable = read;
+			return token;
+		} else {
+			free(read);
+			TOKEN token;
+			token.token = check;
+			token.symtable = (void*) 0;
+			return token;
+		}
 	}
 	
 	printf("Char not able to process: %c", c);
@@ -185,12 +295,19 @@ int main(int argc, char **argv) {
 	}
 
 	TOKEN test = Lex();
-	printf("\n%d ", test.token);
-	printf("\nThe number readen is %d\n", (int) *((int*) test.symtable));
-	test = Lex();
-	printf("%d ", test.token);
-	test = Lex();
-	printf("%d ", test.token);
+	while (test.token != eof && test.token != error) {
+		printf("%d ", test.token);
+		test = Lex();
+	}
+	
+	/* TOKEN test = Lex(); */
+	/* printf("\n%d ", test.token); */
+	/* //printf("\nThe number readen is %d\n", (int) *((int*) test.symtable)); */
+	/* test = Lex(); */
+	/* printf("%d ", test.token); */
+	/* printf("\nThe readen string is %s\n", (char*) test.symtable); */
+	/* test = Lex(); */
+	/* printf("%d ", test.token); */
 
 	// some linked list testing
 
