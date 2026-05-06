@@ -2,7 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum tokens { error, eof, eoc, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, obracket_body, cbracket_body, obracket_param, cbracket_param, add, sub, mult, divide, number, word, kif, kfi };
+enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, obracket_block, cbracket_block, obracket_sub, cbracket_sub, add, sub, mult, divide, number, word, kif, kfi, ret, df, dv };
+enum nodetypes { nroot, ndf, ndv, nassign };
+enum types { tvar };
 
 typedef char STATUS;
 
@@ -11,21 +13,43 @@ typedef struct {
 	void *symtable;
 } TOKEN;
 
+typedef struct typelist_s {
+	char* name;
+	char size;
+	struct typelist_s *next;
+} typelist;
+
+typedef struct parse_root_s {
+	void *statement;
+	struct root_s *next;
+} parse_root;
+
 typedef struct symtableEntry_s {
 	char* name;
-	char id;
-	char type;
-	char category;
+	typelist *type;
+	enum types category;
 	struct symtableEntry_s *next;
 } symtableEntry;
 
-typedef struct lextableEntry_s {
-	char* name;
-	int id;
-	struct symtableEntry_s *next;
-} lextableEntry;
+typedef struct symtable_s {
+	symtableEntry *things;
+	struct symtable_s *children;
+	int nthings;
+} symtable;
 
-int c_id = 0;
+typelist *Typelist;
+int nTypes;
+
+parse_root *ParseRoot;
+symtable *SymtableRoot;
+
+int lexLine = 1;
+
+/* writing this since i am sure i am going to forget it */
+void* *ParseFamily;			/* array of all parents of currently processed thing */
+enum nodetypes *ParseFamilyType;	/* array of types of each parent in array above */
+int ParseFamilyMembers = 0;		/* number of all things inside of the array above */
+int *ParseFamilyFilled;			/* number of filled children for each of things in parse family */
 
 #define ERROR 1
 #define SUCCESS 0
@@ -49,6 +73,9 @@ char isLetter(char c) {
 enum tokens isKeyword(char *s) {
 	if (strcmp(s, "if") == 0) return kif;
 	if (strcmp(s, "fi") == 0) return kfi;
+	if (strcmp(s, "ret") == 0) return ret;
+	if (strcmp(s, "df") == 0) return df;
+	if (strcmp(s, "dv") == 0) return dv;
 	return word;
 }
 
@@ -56,6 +83,7 @@ TOKEN Lex() {
 	char c;
 	do {
 		c = fgetc(file);
+		if (c == '\n') lexLine++;
 	} while (c == ' ' || c == '\n' || c == '\t');
 
 	if (c == EOF) {
@@ -133,35 +161,28 @@ TOKEN Lex() {
 
 	if (c == '(') {
 		TOKEN token;
-		token.token = obracket_param;
+		token.token = obracket_block;
 		token.symtable = (void*) 0;
 		return token;
 	}
 
 	if (c == ')') {
 		TOKEN token;
-		token.token = cbracket_param;
+		token.token = cbracket_block;
 		token.symtable = (void*) 0;
 		return token;
 	}
 
 	if (c == '[') {
 		TOKEN token;
-		token.token = obracket_body;
+		token.token = obracket_sub;
 		token.symtable = (void*) 0;
 		return token;
 	}
 
 	if (c == ']') {
 		TOKEN token;
-		token.token = cbracket_body;
-		token.symtable = (void*) 0;
-		return token;
-	}
-
-	if (c == ';') {
-		TOKEN token;
-		token.token = eoc;
+		token.token = cbracket_sub;
 		token.symtable = (void*) 0;
 		return token;
 	}
@@ -255,9 +276,134 @@ TOKEN Lex() {
 	return token;
 }
 
+void BaseTypeSetup() {
+	Typelist = (typelist*) malloc(sizeof(typelist));
+	nTypes = 5;
+	Typelist->name = (char*) malloc(sizeof(char) * 3);
+	strcpy(Typelist->name, "^0");
+	Typelist->size = 0;
+
+	typelist *b8 = (typelist*) malloc(sizeof(typelist));
+	b8->name = (char*) malloc(sizeof(char) * 3);
+	strcpy(b8->name, "^8");
+	b8->size = 8;
+	Typelist->next = b8;
+
+	typelist *b16 = (typelist*) malloc(sizeof(typelist));
+	b16->name = (char*) malloc(sizeof(char) * 4);
+	strcpy(b16->name, "^16");
+	b16->size = 16;
+	Typelist->next->next = b16;
+
+	typelist *b32 = (typelist*) malloc(sizeof(typelist));
+	b32->name = (char*) malloc(sizeof(char) * 4);
+	strcpy(b32->name, "^32");
+	b32->size = 32;
+	Typelist->next->next->next = b32;
+
+	typelist *b64 = (typelist*) malloc(sizeof(typelist));
+	b64->name = (char*) malloc(sizeof(char) * 4);
+	strcpy(b64->name, "^64");
+	b64->size = 64;
+	Typelist->next->next->next->next = b64;
+}
+	
+
+STATUS Parse() {
+	BaseTypeSetup();
+
+	printf("\n");
+	typelist *curTypelist = Typelist;
+	for (int i = 0; i < nTypes; i++) {
+		printf("%s with size %d,  ", curTypelist->name, curTypelist->size);
+		curTypelist = curTypelist->next;
+	}
+	printf("\n\n");
+
+	ParseRoot = (parse_root*) malloc(sizeof(parse_root));
+	ParseFamily = (void*) malloc(sizeof(void*));
+	ParseFamily[0] = ParseRoot;
+	ParseFamilyType = (enum nodetypes*) malloc(sizeof(enum nodetypes));
+	ParseFamilyType[0] = nroot;
+	ParseFamilyMembers++;
+	ParseFamilyFilled = (int*) malloc(sizeof(int));
+	ParseFamilyFilled[0] = 0;
+
+	SymtableRoot = (symtable*) malloc(sizeof(symtable));
+	SymtableRoot->nthings = 0;
+	symtable *curNode = SymtableRoot;
+	
+	/* TOKEN *tokens = (TOKEN*) malloc(sizeof(TOKEN)); */
+	/* int ntokens = 1; */
+	/* tokens[0] = Lex(); */
+	/* while(tokens[ntokens - 1].token != eoc && tokens[ntokens - 1].token != eof) { */
+	/* 	ntokens++; */
+	/* 	tokens = (TOKEN*) realloc(tokens, sizeof(TOKEN) * ntokens); */
+	/* 	tokens[ntokens - 1] = Lex(); */
+	/* } */
+
+	/* for (int i = 0; i < ntokens; i++) { */
+	/* 	printf("%d ", tokens[i].token); */
+	/* } */
+	
+	for (TOKEN i = Lex(); i.token != eof; i = Lex()) {
+		if (i.token == word) {
+			printf("%s\n", (char*) i.symtable);
+		}
+
+		if (i.token == obracket_block) {
+			TOKEN node = Lex();
+			if (node.token == dv) {
+				printf("Variable define\n");
+				// things (symtableEntry), children, nthings
+				/////////////////curNode->things = (symtableEntry*) malloc(sizeof(symtableEntry));
+				symtableEntry **lastEntry = &(curNode->things);
+				for (int i = 0; i < curNode->nthings; i++) {
+					lastEntry = &((*lastEntry)->next);
+				}
+				*lastEntry = (symtableEntry*) malloc(sizeof(symtableEntry));
+				/* typedef struct symtableEntry_s { */
+				/* 	char* name; */
+				/* 	typelist *type; */
+				/* 	enum types category; */
+				/* 	struct symtableEntry_s *next; */
+				/* } symtableEntry; */
+				TOKEN type = Lex();
+				if (type.token != word) {
+					printf("nemai:Parse \tVariable type isn't a type on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+				
+				curTypelist = Typelist;
+				int isAType = 0;
+				
+				for (int i = 0; i < nTypes; i++) {
+					if (strcmp(type.symtable, curTypelist->name) == 0) {
+						i = nTypes;
+						isAType++;
+					} else {
+						curTypelist = curTypelist->next;
+					}
+				}
+				if (isAType < 1) {
+					printf("nemai:Parse \tVariable type isn't a registered type on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+
+				(*lastEntry)->type = curTypelist;
+				(curNode->nthings)++;
+			}
+		}
+	}
+	return SUCCESS;
+}
+
 STATUS LexSetup(char *filename) {
 	file = fopen(filename, "r");
-
+	lexLine = 1;
+	
 	if (file == NULL) {
 		printf("nemai:LexSetup \tFile doesn't exist or couldn't be opened.");
 		printf("%c", '\n');
@@ -299,6 +445,16 @@ int main(int argc, char **argv) {
 		printf("%d ", test.token);
 		test = Lex();
 	}
+	printf("%c", '\n');
+
+	LexSetup(argv[1]);
+
+	if (Parse() == ERROR) {
+		return ERROR;
+	}
+
+	printf("\nType of variable: %s", SymtableRoot->things->type->name);
+	printf("\nType of the second variable: %s", SymtableRoot->things->next->type->name);
 	
 	/* TOKEN test = Lex(); */
 	/* printf("\n%d ", test.token); */
