@@ -1,5 +1,5 @@
-(dv ^64 i)
-(dv ^32 j)
+(dv ^64 abasatgjshgahshahadhshdaghsaasgdjadsasdgasgdadshdgajdkaahdashajdhaa)
+(dv ^32 abasatgjshgahshahadhshdaghsaasgdjadsasdgasgdadshdgajdkaahdashajdhaa1)
 
 (df ^32 main []
     (if (== xina me)

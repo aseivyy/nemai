@@ -42,6 +42,7 @@ int nTypes;
 
 parse_root *ParseRoot;
 symtable *SymtableRoot;
+symtable* *SymtableFamily;
 
 int lexLine = 1;
 
@@ -332,6 +333,10 @@ STATUS Parse() {
 	SymtableRoot = (symtable*) malloc(sizeof(symtable));
 	SymtableRoot->nthings = 0;
 	symtable *curNode = SymtableRoot;
+
+	SymtableFamily = (symtable**) malloc(sizeof(symtable*) * 2);
+	SymtableFamily[0] = SymtableRoot;
+	SymtableFamily[1] = (void*) 0;
 	
 	/* TOKEN *tokens = (TOKEN*) malloc(sizeof(TOKEN)); */
 	/* int ntokens = 1; */
@@ -354,7 +359,6 @@ STATUS Parse() {
 		if (i.token == obracket_block) {
 			TOKEN node = Lex();
 			if (node.token == dv) {
-				printf("Variable define\n");
 				// things (symtableEntry), children, nthings
 				/////////////////curNode->things = (symtableEntry*) malloc(sizeof(symtableEntry));
 				symtableEntry **lastEntry = &(curNode->things);
@@ -393,6 +397,56 @@ STATUS Parse() {
 				}
 
 				(*lastEntry)->type = curTypelist;
+
+				TOKEN VarName = Lex();
+				if (VarName.token != word) {
+					printf("nemai:Parse \tVariable name is reserved or forbidden on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+
+				int i = 0;
+				int nameCheckFail = 0;
+				(*lastEntry)->name = malloc(sizeof(char));
+				
+				while((SymtableFamily[i] != (void*) 0) && nameCheckFail == 0) {
+					int nodenthings = SymtableFamily[i]->nthings;
+					symtableEntry *curListEntry = SymtableFamily[i]->things;
+					for (int i = 0; i < nodenthings && nameCheckFail == 0; i++) {
+						if(strcmp(curListEntry->name, VarName.symtable) == 0) {
+							nameCheckFail++;
+						}
+						curListEntry = curListEntry->next;
+					}
+					i++;
+				}
+
+				if (nameCheckFail > 0) {
+					printf("nemai:Parse \tAttempt to redefine a variable on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+
+				(*lastEntry)->name[0] = ((char*) (VarName.symtable))[0];
+				int nchars;
+				for (int i = 1; ((char*) (VarName.symtable))[i] != '\0'; i++) {
+					(*lastEntry)->name = realloc((*lastEntry)->name, sizeof(char) * (i + 1));
+					(*lastEntry)->name[i] = ((char*) (VarName.symtable))[i];
+					nchars = i;
+				}
+				
+				(*lastEntry)->name = realloc((*lastEntry)->name, sizeof(char) * (nchars + 2));
+				(*lastEntry)->name[nchars + 1] = '\0';
+
+				(*lastEntry)->category = tvar;
+
+				TOKEN ending = Lex();
+				if (ending.token != cbracket_block) {
+					printf("nemai:Parse \tFunction \"df\" can only take 2 arguments, but given more on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+				
 				(curNode->nthings)++;
 			}
 		}
@@ -453,8 +507,8 @@ int main(int argc, char **argv) {
 		return ERROR;
 	}
 
-	printf("\nType of variable: %s", SymtableRoot->things->type->name);
-	printf("\nType of the second variable: %s", SymtableRoot->things->next->type->name);
+	printf("\nType of variable: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->things->type->name, SymtableRoot->things->name, SymtableRoot->things->category);
+	printf("\nType of the second variable: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->things->next->type->name, SymtableRoot->things->next->name, SymtableRoot->things->next->category);
 	
 	/* TOKEN test = Lex(); */
 	/* printf("\n%d ", test.token); */
