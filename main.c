@@ -33,7 +33,7 @@ typedef struct symtableEntry_s {
 
 typedef struct symtable_s {
 	symtableEntry *things;
-	struct symtable_s *children;
+	struct symtable_s **children;
 	int nthings;
 } symtable;
 
@@ -317,18 +317,108 @@ void BaseTypeSetup() {
 	b64->size = 64;
 	Typelist->next->next->next->next = b64;
 }
+
+STATUS addVar(symtable **pcurNode, typelist **pcurTypelist) {
+	symtable *curNode = *(pcurNode);
+	typelist *curTypelist = *(pcurTypelist);
 	
+	symtableEntry **lastEntry = &(curNode->things);
+	for (int i = 0; i < curNode->nthings; i++) {
+		lastEntry = &((*lastEntry)->next);
+	}
+	*lastEntry = (symtableEntry*) malloc(sizeof(symtableEntry));
+	
+	TOKEN type = Lex();
+	if (type.token != word) {
+		printf("nemai:Parse \tVariable type isn't a type on line %d", lexLine);
+		printf("%c", '\n');
+		return ERROR;
+	}
+		
+	curTypelist = Typelist;
+	int isAType = 0;
+	
+	for (int i = 0; i < nTypes; i++) {
+		if (strcmp(type.symtable, curTypelist->name) == 0) {
+			i = nTypes;
+			isAType++;
+		} else {
+			curTypelist = curTypelist->next;
+		}
+	}
+	if (isAType < 1) {
+		printf("nemai:Parse \tVariable type isn't a registered type on line %d", lexLine);
+		printf("%c", '\n');
+		return ERROR;
+	}
+		
+	(*lastEntry)->type = curTypelist;
+		
+	TOKEN VarName = Lex();
+	if (VarName.token != word) {
+		printf("nemai:Parse \tVariable name is reserved or forbidden on line %d", lexLine);
+		printf("%c", '\n');
+		return ERROR;
+	}
+		
+	int i = 0;
+	int nameCheckFail = 0;
+	(*lastEntry)->name = malloc(sizeof(char));
+		
+	while((SymtableFamily[i] != (void*) 0) && nameCheckFail == 0) {
+		int nodenthings = SymtableFamily[i]->nthings;
+		symtableEntry *curListEntry = SymtableFamily[i]->things;
+		for (int i = 0; i < nodenthings && nameCheckFail == 0; i++) {
+			if(strcmp(curListEntry->name, VarName.symtable) == 0) {
+				nameCheckFail++;
+			}
+			curListEntry = curListEntry->next;
+		}
+		i++;
+	}
+	
+	if (nameCheckFail > 0) {
+		printf("nemai:Parse \tAttempt to redefine a variable on line %d", lexLine);
+		printf("%c", '\n');
+		return ERROR;
+	}
+		
+	(*lastEntry)->name[0] = ((char*) (VarName.symtable))[0];
+	int nchars;
+	for (int i = 1; ((char*) (VarName.symtable))[i] != '\0'; i++) {
+		(*lastEntry)->name = realloc((*lastEntry)->name, sizeof(char) * (i + 1));
+		(*lastEntry)->name[i] = ((char*) (VarName.symtable))[i];
+		nchars = i;
+	}
+		
+	(*lastEntry)->name = realloc((*lastEntry)->name, sizeof(char) * (nchars + 2));
+	(*lastEntry)->name[nchars + 1] = '\0';
+
+	(*lastEntry)->category = tvar;
+		
+	TOKEN ending = Lex();
+	if (ending.token != cbracket_block) {
+		printf("nemai:Parse \tFunction \"df\" can only take 2 arguments, but given more on line %d", lexLine);
+		printf("%c", '\n');
+		return ERROR;
+	}
+				
+	(curNode->nthings)++;
+	return SUCCESS;
+}
 
 STATUS Parse() {
 	BaseTypeSetup();
 
-	printf("\n");
 	typelist *curTypelist = Typelist;
-	for (int i = 0; i < nTypes; i++) {
-		printf("%s with size %d,  ", curTypelist->name, curTypelist->size);
-		curTypelist = curTypelist->next;
-	}
-	printf("\n\n");
+
+	/* Uncomment to print all registered types */
+	/* printf("\n"); */
+	/* for (int i = 0; i < nTypes; i++) { */
+	/* 	printf("%s with size %d,  ", curTypelist->name, curTypelist->size); */
+	/* 	curTypelist = curTypelist->next; */
+	/* } */
+	/* printf("\n\n"); */
 
 	ParseRoot = (parse_root*) malloc(sizeof(parse_root));
 	ParseFamily = (void**) malloc(sizeof(void*));
@@ -342,6 +432,8 @@ STATUS Parse() {
 	SymtableRoot = (symtable*) malloc(sizeof(symtable));
 	SymtableRoot->nthings = 0;
 	symtable *curNode = SymtableRoot;
+	SymtableRoot->children = (symtable**) malloc(sizeof(symtable*));
+	*(SymtableRoot->children) = (void*) 0;
 
 	SymtableFamily = (symtable**) malloc(sizeof(symtable*) * 2);
 	SymtableFamily[0] = SymtableRoot;
@@ -350,101 +442,16 @@ STATUS Parse() {
 	FunctionRoot = (functionTable*) malloc(sizeof(functionTable));
 	FunctionRoot->next = (void*) 0;
 
+	int blockFuncDef = 0;
+
 	// I know a waste of memory I couldnt think of any better way, so I guess first entry will be just always set to empty for now
 	
 	for (TOKEN i = Lex(); i.token != eof && i.token != error; i = Lex()) {
 		if (i.token == obracket_block) {
 			TOKEN node = Lex();
 			if (node.token == dv) {
-				symtableEntry **lastEntry = &(curNode->things);
-				for (int i = 0; i < curNode->nthings; i++) {
-					lastEntry = &((*lastEntry)->next);
-				}
-				*lastEntry = (symtableEntry*) malloc(sizeof(symtableEntry));
-				/* typedef struct symtableEntry_s { */
-				/* 	char* name; */
-				/* 	typelist *type; */
-				/* 	enum types category; */
-				/* 	struct symtableEntry_s *next; */
-				/* } symtableEntry; */
-				TOKEN type = Lex();
-				if (type.token != word) {
-					printf("nemai:Parse \tVariable type isn't a type on line %d", lexLine);
-					printf("%c", '\n');
-					return ERROR;
-				}
-				
-				curTypelist = Typelist;
-				int isAType = 0;
-				
-				for (int i = 0; i < nTypes; i++) {
-					if (strcmp(type.symtable, curTypelist->name) == 0) {
-						i = nTypes;
-						isAType++;
-					} else {
-						curTypelist = curTypelist->next;
-					}
-				}
-				if (isAType < 1) {
-					printf("nemai:Parse \tVariable type isn't a registered type on line %d", lexLine);
-					printf("%c", '\n');
-					return ERROR;
-				}
-
-				(*lastEntry)->type = curTypelist;
-
-				TOKEN VarName = Lex();
-				if (VarName.token != word) {
-					printf("nemai:Parse \tVariable name is reserved or forbidden on line %d", lexLine);
-					printf("%c", '\n');
-					return ERROR;
-				}
-
-				int i = 0;
-				int nameCheckFail = 0;
-				(*lastEntry)->name = malloc(sizeof(char));
-				
-				while((SymtableFamily[i] != (void*) 0) && nameCheckFail == 0) {
-					int nodenthings = SymtableFamily[i]->nthings;
-					symtableEntry *curListEntry = SymtableFamily[i]->things;
-					for (int i = 0; i < nodenthings && nameCheckFail == 0; i++) {
-						if(strcmp(curListEntry->name, VarName.symtable) == 0) {
-							nameCheckFail++;
-						}
-						curListEntry = curListEntry->next;
-					}
-					i++;
-				}
-
-				if (nameCheckFail > 0) {
-					printf("nemai:Parse \tAttempt to redefine a variable on line %d", lexLine);
-					printf("%c", '\n');
-					return ERROR;
-				}
-
-				(*lastEntry)->name[0] = ((char*) (VarName.symtable))[0];
-				int nchars;
-				for (int i = 1; ((char*) (VarName.symtable))[i] != '\0'; i++) {
-					(*lastEntry)->name = realloc((*lastEntry)->name, sizeof(char) * (i + 1));
-					(*lastEntry)->name[i] = ((char*) (VarName.symtable))[i];
-					nchars = i;
-				}
-				
-				(*lastEntry)->name = realloc((*lastEntry)->name, sizeof(char) * (nchars + 2));
-				(*lastEntry)->name[nchars + 1] = '\0';
-
-				(*lastEntry)->category = tvar;
-
-				TOKEN ending = Lex();
-				if (ending.token != cbracket_block) {
-					printf("nemai:Parse \tFunction \"df\" can only take 2 arguments, but given more on line %d", lexLine);
-					printf("%c", '\n');
-					return ERROR;
-				}
-				
-				(curNode->nthings)++;
+				if (addVar(&curNode, &curTypelist) == ERROR) return ERROR;
 			} else if (node.token == df) {
-
 				functionTable **lastNode = &(FunctionRoot);
 				while ((*lastNode)->next != (void*) 0) {
 					lastNode = &((*lastNode)->next);
@@ -490,18 +497,6 @@ STATUS Parse() {
 
 				int nameCheckFail = 0;
 				(*lastNode)->name = malloc(sizeof(char));
-				
-				/* while((SymtableFamily[i] != (void*) 0) && nameCheckFail == 0) { */
-				/* 	int nodenthings = SymtableFamily[i]->nthings; */
-				/* 	symtableEntry *curListEntry = SymtableFamily[i]->things; */
-				/* 	for (int i = 0; i < nodenthings && nameCheckFail == 0; i++) { */
-				/* 		if(strcmp(curListEntry->name, VarName.symtable) == 0) { */
-				/* 			nameCheckFail++; */
-				/* 		} */
-				/* 		curListEntry = curListEntry->next; */
-				/* 	} */
-				/* 	i++; */
-				/* } */
 
 				functionTable **nametester = &(FunctionRoot->next);
 				while(((*nametester)->next != (void*) 0) && ((*nametester) != (void*) 0) && nameCheckFail == 0) {
@@ -526,7 +521,47 @@ STATUS Parse() {
 				
 				(*lastNode)->name = realloc((*lastNode)->name, sizeof(char) * (nchars + 2));
 				(*lastNode)->name[nchars + 1] = '\0';
+
+				/* Anotherrr node to myself probably tommorow make here param support!!!!!!!!!!!!! */
+				Lex();
+				Lex();
+
+				symtable **symtableChildChecker = SymtableRoot->children;
+				int toPlace = 0;
+				for (int i = 0; symtableChildChecker[i] != (void*) 0; i++) {
+					toPlace = i + 1;
+				}
+
+				symtable *NewSymtable = (symtable*) malloc(sizeof(symtable));
+				NewSymtable->nthings = 0;
+				
+				symtableChildChecker[toPlace+1] = (void*) 0;
+
+				NewSymtable->children = (symtable**) malloc(sizeof(symtable*));
+				*(NewSymtable->children) = (void*) 0;
+
+				symtableChildChecker[toPlace] = NewSymtable;
+
+				SymtableFamily = (symtable**) realloc(SymtableFamily, sizeof(symtable*) * 3);
+				SymtableFamily[2] = (void*) 0;
+				SymtableFamily[1] = NewSymtable;
+
+				curNode = NewSymtable;
+			} else if (node.token <= word) {
+				// add support for user made functios later and dont forget it
+				printf("nemai:Parse \tAttempt to call an undefined function on line %d", lexLine);
+				printf("%c", '\n');
+				return ERROR;
 			}
+
+		} else if (i.token == cbracket_block) {
+			int SymtableFamilyMembers = 0;
+			while (SymtableFamily[SymtableFamilyMembers] != (void*) 0) {
+				SymtableFamilyMembers++;
+			}
+			curNode = SymtableFamily[SymtableFamilyMembers - 2];
+			SymtableFamily = (symtable**) realloc(SymtableFamily, sizeof(symtable*) * (SymtableFamilyMembers - 1));
+			SymtableFamily[SymtableFamilyMembers - 1] = (void*) 0;
 		}
 	}
 	return SUCCESS;
@@ -572,14 +607,15 @@ int main(int argc, char **argv) {
 		return ERROR;
 	}
 
-	TOKEN test = Lex();
-	while (test.token != eof && test.token != error) {
-		printf("%d ", test.token);
-		test = Lex();
-	}
-	printf("%c", '\n');
+	/* Uncomment to print tokens */
+	/* TOKEN test = Lex(); */
+	/* while (test.token != eof && test.token != error) { */
+	/* 	printf("%d ", test.token); */
+	/* 	test = Lex(); */
+	/* } */
+	/* printf("%c", '\n'); */
 
-	LexSetup(argv[1]);
+	/* LexSetup(argv[1]); */
 
 	if (Parse() == ERROR) {
 		return ERROR;
@@ -589,6 +625,10 @@ int main(int argc, char **argv) {
 	printf("\nType of the second variable: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->things->next->type->name, SymtableRoot->things->next->name, SymtableRoot->things->next->category);
 	printf("\nType of function: %s\nName of it: %s\n", FunctionRoot->next->type->name, FunctionRoot->next->name);
 	printf("\nType of the second function: %s\nName of it: %s\n", FunctionRoot->next->next->type->name, FunctionRoot->next->next->name);
+	printf("\nType of the var inside main func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[0]->things->type->name, SymtableRoot->children[0]->things->name, SymtableRoot->children[0]->things->category);
+	printf("\nType of the second var inside the main func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[0]->things->next->type->name, SymtableRoot->children[0]->things->next->name, SymtableRoot->children[0]->things->next->category);
+	printf("\nType of the var inside the second func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[1]->things->type->name, SymtableRoot->children[1]->things->name, SymtableRoot->children[1]->things->category);
+
 	
 	/* TOKEN test = Lex(); */
 	/* printf("\n%d ", test.token); */

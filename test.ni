@@ -2,13 +2,13 @@
 (dv ^32 abasatgjshgahshahadhshdaghsaasgdjadsasdgasgdadshdgajdkaahdashajdhaa1)
 
 (df ^64 main []
-    (if (== xina me)
-    	(= i 1))
-    (fi
-	(= i 2))
-    (ret 0)
+    (dv ^8 mimimi)
+    (dv ^8 hihi)
 )
 
-(df ^32 ahaha []
-    (ret 0)
+(dv ^32 mimimi)
+(dv ^8 hihi)
+
+(df ^64 ahaha []
+    (dv ^16 ae)
 )
