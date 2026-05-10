@@ -9,6 +9,9 @@
 (dv ^32 mimimi)
 (dv ^8 hihi)
 
-(df ^64 ahaha []
-    (dv ^16 ae)
+(df ^64 ahaha [^64 name; ^32 age]
+    (dv ^16 ae)    
 )
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(dv ^64 name)

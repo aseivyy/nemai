@@ -94,7 +94,7 @@ TOKEN Lex() {
 	do {
 		c = fgetc(file);
 		if (c == '\n') lexLine++;
-	} while (c == ' ' || c == '\n' || c == '\t');
+	} while (c == ' ' || c == '\n' || c == '\t' || c == ';');
 
 	if (c == EOF) {
 		TOKEN token;
@@ -318,9 +318,9 @@ void BaseTypeSetup() {
 	Typelist->next->next->next->next = b64;
 }
 
-STATUS addVar(symtable **pcurNode, typelist **pcurTypelist) {
+STATUS addVar(symtable **pcurNode, TOKEN *type, TOKEN *name) {
 	symtable *curNode = *(pcurNode);
-	typelist *curTypelist = *(pcurTypelist);
+	typelist *curTypelist = Typelist;
 	
 	symtableEntry **lastEntry = &(curNode->things);
 	for (int i = 0; i < curNode->nthings; i++) {
@@ -328,18 +328,16 @@ STATUS addVar(symtable **pcurNode, typelist **pcurTypelist) {
 	}
 	*lastEntry = (symtableEntry*) malloc(sizeof(symtableEntry));
 	
-	TOKEN type = Lex();
-	if (type.token != word) {
+	if (type->token != word) {
 		printf("nemai:Parse \tVariable type isn't a type on line %d", lexLine);
 		printf("%c", '\n');
 		return ERROR;
 	}
 		
-	curTypelist = Typelist;
 	int isAType = 0;
 	
 	for (int i = 0; i < nTypes; i++) {
-		if (strcmp(type.symtable, curTypelist->name) == 0) {
+		if (strcmp(type->symtable, curTypelist->name) == 0) {
 			i = nTypes;
 			isAType++;
 		} else {
@@ -354,8 +352,7 @@ STATUS addVar(symtable **pcurNode, typelist **pcurTypelist) {
 		
 	(*lastEntry)->type = curTypelist;
 		
-	TOKEN VarName = Lex();
-	if (VarName.token != word) {
+	if (name->token != word) {
 		printf("nemai:Parse \tVariable name is reserved or forbidden on line %d", lexLine);
 		printf("%c", '\n');
 		return ERROR;
@@ -369,7 +366,7 @@ STATUS addVar(symtable **pcurNode, typelist **pcurTypelist) {
 		int nodenthings = SymtableFamily[i]->nthings;
 		symtableEntry *curListEntry = SymtableFamily[i]->things;
 		for (int i = 0; i < nodenthings && nameCheckFail == 0; i++) {
-			if(strcmp(curListEntry->name, VarName.symtable) == 0) {
+			if(strcmp(curListEntry->name, name->symtable) == 0) {
 				nameCheckFail++;
 			}
 			curListEntry = curListEntry->next;
@@ -383,11 +380,11 @@ STATUS addVar(symtable **pcurNode, typelist **pcurTypelist) {
 		return ERROR;
 	}
 		
-	(*lastEntry)->name[0] = ((char*) (VarName.symtable))[0];
+	(*lastEntry)->name[0] = ((char*) (name->symtable))[0];
 	int nchars;
-	for (int i = 1; ((char*) (VarName.symtable))[i] != '\0'; i++) {
+	for (int i = 1; ((char*) (name->symtable))[i] != '\0'; i++) {
 		(*lastEntry)->name = realloc((*lastEntry)->name, sizeof(char) * (i + 1));
-		(*lastEntry)->name[i] = ((char*) (VarName.symtable))[i];
+		(*lastEntry)->name[i] = ((char*) (name->symtable))[i];
 		nchars = i;
 	}
 		
@@ -395,13 +392,6 @@ STATUS addVar(symtable **pcurNode, typelist **pcurTypelist) {
 	(*lastEntry)->name[nchars + 1] = '\0';
 
 	(*lastEntry)->category = tvar;
-		
-	TOKEN ending = Lex();
-	if (ending.token != cbracket_block) {
-		printf("nemai:Parse \tFunction \"df\" can only take 2 arguments, but given more on line %d", lexLine);
-		printf("%c", '\n');
-		return ERROR;
-	}
 				
 	(curNode->nthings)++;
 	return SUCCESS;
@@ -439,19 +429,48 @@ STATUS Parse() {
 	SymtableFamily[0] = SymtableRoot;
 	SymtableFamily[1] = (void*) 0;
 
+	// I know a waste of memory I couldnt think of any better way, so I guess first entry will be just always set to empty for now
 	FunctionRoot = (functionTable*) malloc(sizeof(functionTable));
 	FunctionRoot->next = (void*) 0;
 
 	int blockFuncDef = 0;
-
-	// I know a waste of memory I couldnt think of any better way, so I guess first entry will be just always set to empty for now
 	
 	for (TOKEN i = Lex(); i.token != eof && i.token != error; i = Lex()) {
 		if (i.token == obracket_block) {
 			TOKEN node = Lex();
 			if (node.token == dv) {
-				if (addVar(&curNode, &curTypelist) == ERROR) return ERROR;
+				TOKEN type = Lex();
+				TOKEN name = Lex();
+				if (type.token == eof || name.token == eof) {
+					printf("nemai:Parse \tFile ended on unfinished variable definition on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+
+				if (type.token != word || name.token != word) {
+					printf("nemai:Parse \tWrong parameters given to function \"dv\" or given less than required 2 on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+				
+				if (addVar(&curNode, &type, &name) == ERROR) return ERROR;
+
+				TOKEN ending = Lex();
+				if (ending.token == eof) {
+					printf("nemai:Parse \tFile ended on unfinished variable definition on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				} else if (ending.token != cbracket_block) {
+					printf("nemai:Parse \tFunction \"df\" can only take 2 arguments, but given more on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
 			} else if (node.token == df) {
+				if (curNode != SymtableRoot) {
+					printf("nemai:Parse \tAttempt to define a function inside of a function on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
 				functionTable **lastNode = &(FunctionRoot);
 				while ((*lastNode)->next != (void*) 0) {
 					lastNode = &((*lastNode)->next);
@@ -522,10 +541,6 @@ STATUS Parse() {
 				(*lastNode)->name = realloc((*lastNode)->name, sizeof(char) * (nchars + 2));
 				(*lastNode)->name[nchars + 1] = '\0';
 
-				/* Anotherrr node to myself probably tommorow make here param support!!!!!!!!!!!!! */
-				Lex();
-				Lex();
-
 				symtable **symtableChildChecker = SymtableRoot->children;
 				int toPlace = 0;
 				for (int i = 0; symtableChildChecker[i] != (void*) 0; i++) {
@@ -547,6 +562,25 @@ STATUS Parse() {
 				SymtableFamily[1] = NewSymtable;
 
 				curNode = NewSymtable;
+
+				TOKEN bracketCheck = Lex();
+				if (bracketCheck.token != obracket_sub) {
+					printf("nemai:Parse \tMissing parameter list in function definition on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+				
+				TOKEN paramType = Lex();
+
+				if (paramType.token != cbracket_sub) {
+					TOKEN paramName = Lex();
+					while (paramType.token == word && paramName.token == word) {
+						if (addVar(&curNode, &paramType, &paramName) == ERROR) return ERROR;
+						paramType = Lex();
+						if (paramType.token != cbracket_sub) paramName = Lex();
+					}
+				}
+				
 			} else if (node.token <= word) {
 				// add support for user made functios later and dont forget it
 				printf("nemai:Parse \tAttempt to call an undefined function on line %d", lexLine);
@@ -621,6 +655,7 @@ int main(int argc, char **argv) {
 		return ERROR;
 	}
 
+	printf("\n[some kind of debugging things to prove that it works]\n");
 	printf("\nType of variable: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->things->type->name, SymtableRoot->things->name, SymtableRoot->things->category);
 	printf("\nType of the second variable: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->things->next->type->name, SymtableRoot->things->next->name, SymtableRoot->things->next->category);
 	printf("\nType of function: %s\nName of it: %s\n", FunctionRoot->next->type->name, FunctionRoot->next->name);
