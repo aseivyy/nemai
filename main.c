@@ -3,7 +3,7 @@
 #include <string.h>
 
 enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, obracket_block, cbracket_block, obracket_sub, cbracket_sub, add, sub, mult, divide, number, word, kif, kfi, ret, df, dv };
-enum nodetypes { nroot, ndf, ndv, nassign };
+enum nodetypes { nroot, ndf, nret };
 enum types { tvar };
 
 typedef char STATUS;
@@ -19,10 +19,12 @@ typedef struct typelist_s {
 	struct typelist_s *next;
 } typelist;
 
-typedef struct parse_root_s {
-	void *statement;
-	struct root_s *next;
-} parse_root;
+typedef struct parsetable_s {
+	struct parsetable_s **things;
+	enum nodetypes type;
+	char state;
+	void* args;
+} parsetable;
 
 typedef struct symtableEntry_s {
 	char* name;
@@ -46,7 +48,7 @@ typedef struct functionTable_s {
 typelist *Typelist;
 int nTypes;
 
-parse_root *ParseRoot;
+parsetable *ParseRoot;
 
 symtable *SymtableRoot;
 symtable* *SymtableFamily;
@@ -55,11 +57,10 @@ functionTable *FunctionRoot;
 
 int lexLine = 1;
 
-/* writing this since i am sure i am going to forget it */
-void* *ParseFamily;			/* array of all parents of currently processed thing */
-enum nodetypes *ParseFamilyType;	/* array of types of each parent in array above */
-int ParseFamilyMembers = 0;		/* number of all things inside of the array above */
-int *ParseFamilyFilled;			/* number of filled children for each of things in parse family */
+parsetable* *ParseFamily;
+enum nodetypes *ParseFamilyType;
+int ParseFamilyMembers = 0;
+int *ParseFamilyFilled;
 
 #define ERROR 1
 #define SUCCESS 0
@@ -399,7 +400,7 @@ STATUS addVar(symtable **pcurNode, TOKEN *type, TOKEN *name) {
 
 STATUS Parse() {
 	BaseTypeSetup();
-
+	
 	typelist *curTypelist = Typelist;
 
 	/* Uncomment to print all registered types */
@@ -410,14 +411,23 @@ STATUS Parse() {
 	/* } */
 	/* printf("\n\n"); */
 
-	ParseRoot = (parse_root*) malloc(sizeof(parse_root));
-	ParseFamily = (void**) malloc(sizeof(void*));
+	ParseRoot = (parsetable*) malloc(sizeof(parsetable));
+	parsetable *curParseNode = ParseRoot;
+	ParseRoot->state = 1;
+	ParseRoot->things = (parsetable**) malloc(sizeof(parsetable*));
+	ParseRoot->things[0] = (parsetable*) malloc(sizeof(parsetable));
+	ParseRoot->things[0]->state = 0;
+	ParseRoot->type = nroot;
+
+	ParseFamily = (parsetable**) malloc(sizeof(parsetable*) * 2);
 	ParseFamily[0] = ParseRoot;
-	ParseFamilyType = (enum nodetypes*) malloc(sizeof(enum nodetypes));
-	ParseFamilyType[0] = nroot;
-	ParseFamilyMembers++;
-	ParseFamilyFilled = (int*) malloc(sizeof(int));
-	ParseFamilyFilled[0] = 0;
+	ParseFamily[1] = (void*) 0;
+	
+	/* typedef struct parsetable_s { */
+	/* 	struct parsetable_s **things; */
+	/* 	enum types nodetype; */
+	/* 	void* args; */
+	/* } parsetable; */
 
 	SymtableRoot = (symtable*) malloc(sizeof(symtable));
 	SymtableRoot->nthings = 0;
@@ -433,7 +443,6 @@ STATUS Parse() {
 	FunctionRoot = (functionTable*) malloc(sizeof(functionTable));
 	FunctionRoot->next = (void*) 0;
 
-	int blockFuncDef = 0;
 	
 	for (TOKEN i = Lex(); i.token != eof && i.token != error; i = Lex()) {
 		if (i.token == obracket_block) {
@@ -471,6 +480,29 @@ STATUS Parse() {
 					printf("%c", '\n');
 					return ERROR;
 				}
+
+				int parselast = 0;
+				for (int i = 0; ParseRoot->things[i]->state != 0; i++) {
+					parselast = i + 1;
+				}
+
+				curParseNode = ParseRoot->things[parselast];
+				
+				ParseRoot->things = (parsetable**) realloc(ParseRoot->things, sizeof(parsetable*) * (parselast + 2));
+				ParseRoot->things[parselast + 1] = (parsetable*) malloc(sizeof(parsetable));
+				ParseRoot->things[parselast + 1]->state = 0;
+				
+				ParseRoot->things[parselast]->state = 1;
+				ParseRoot->things[parselast]->things = (parsetable**) malloc(sizeof(parsetable*));
+				ParseRoot->things[parselast]->things[0] = (parsetable*) malloc(sizeof(parsetable));
+				ParseRoot->things[parselast]->things[0]->state = 0;
+				ParseRoot->things[parselast]->type = ndf;
+				
+				ParseFamily = (parsetable**) realloc(ParseFamily, sizeof(parsetable*) * 3);
+				ParseFamily[1] = curParseNode;
+				ParseFamily[2] = (void*) 0;
+
+
 				functionTable **lastNode = &(FunctionRoot);
 				while ((*lastNode)->next != (void*) 0) {
 					lastNode = &((*lastNode)->next);
@@ -580,6 +612,29 @@ STATUS Parse() {
 						if (paramType.token != cbracket_sub) paramName = Lex();
 					}
 				}
+			} else if (node.token == ret) {
+				int parselast = 0;
+				for (int i = 0; curParseNode->things[i]->state != 0; i++) {
+					parselast = i + 1;
+				}
+
+				curParseNode->things = (parsetable**) realloc(curParseNode->things, sizeof(parsetable*) * (parselast + 2));
+				curParseNode->things[parselast + 1] = (parsetable*) malloc(sizeof(parsetable));
+				curParseNode->things[parselast + 1]->state = 0;
+
+				curParseNode = curParseNode->things[parselast];
+				curParseNode->state = 1;
+				curParseNode->things = (void*) 0;
+				curParseNode->type = nret;
+
+				int ParseFamilyMembers = 0;
+				while (ParseFamily[ParseFamilyMembers] != (void*) 0) {
+					ParseFamilyMembers++;
+				}
+
+				ParseFamily = (parsetable**) realloc(ParseFamily, sizeof(parsetable*) * (ParseFamilyMembers + 2));
+				ParseFamily[ParseFamilyMembers] = curParseNode;
+				ParseFamily[ParseFamilyMembers + 1] = (void*) 0;
 				
 			} else if (node.token <= word) {
 				// add support for user made functios later and dont forget it
@@ -589,13 +644,23 @@ STATUS Parse() {
 			}
 
 		} else if (i.token == cbracket_block) {
-			int SymtableFamilyMembers = 0;
-			while (SymtableFamily[SymtableFamilyMembers] != (void*) 0) {
-				SymtableFamilyMembers++;
+			if (curParseNode->type != nret) {
+				int SymtableFamilyMembers = 0;
+				while (SymtableFamily[SymtableFamilyMembers] != (void*) 0) {
+					SymtableFamilyMembers++;
+				}
+				curNode = SymtableFamily[SymtableFamilyMembers - 2];
+				SymtableFamily = (symtable**) realloc(SymtableFamily, sizeof(symtable*) * (SymtableFamilyMembers - 1));
+				SymtableFamily[SymtableFamilyMembers - 1] = (void*) 0;
 			}
-			curNode = SymtableFamily[SymtableFamilyMembers - 2];
-			SymtableFamily = (symtable**) realloc(SymtableFamily, sizeof(symtable*) * (SymtableFamilyMembers - 1));
-			SymtableFamily[SymtableFamilyMembers - 1] = (void*) 0;
+				
+			int ParseFamilyMembers = 0;
+			while (ParseFamily[ParseFamilyMembers] != (void*) 0) {
+				ParseFamilyMembers++;
+			}
+			curParseNode = ParseFamily[ParseFamilyMembers - 2];
+			ParseFamily = (parsetable**) realloc(ParseFamily, sizeof(parsetable*) * (ParseFamilyMembers - 1));
+			ParseFamily[ParseFamilyMembers - 1] = (void*) 0;
 		}
 	}
 	return SUCCESS;
@@ -621,6 +686,26 @@ STATUS LexSetup(char *filename) {
 	fseek(file, -1, SEEK_CUR);
 	
 	return SUCCESS;
+}
+
+void ReadParseTree(parsetable *table) {
+	for (int i = 0; table->things[i]->state != 0; i++) {
+		switch(table->things[i]->type) {
+		case nroot:
+			break;
+		case ndf:
+			printf("Function node\n");
+			ReadParseTree(table->things[i]);
+			printf("Function node end\n\n");
+			break;
+		case nret:
+			printf("Return node\n");
+			break;
+		default:
+			printf("idk something ig %d\n", table->things[i]->type);
+			break;
+		}
+	}
 }
 	
 
@@ -650,7 +735,6 @@ int main(int argc, char **argv) {
 	/* printf("%c", '\n'); */
 
 	/* LexSetup(argv[1]); */
-
 	if (Parse() == ERROR) {
 		return ERROR;
 	}
@@ -663,46 +747,11 @@ int main(int argc, char **argv) {
 	printf("\nType of the var inside main func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[0]->things->type->name, SymtableRoot->children[0]->things->name, SymtableRoot->children[0]->things->category);
 	printf("\nType of the second var inside the main func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[0]->things->next->type->name, SymtableRoot->children[0]->things->next->name, SymtableRoot->children[0]->things->next->category);
 	printf("\nType of the var inside the second func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[1]->things->type->name, SymtableRoot->children[1]->things->name, SymtableRoot->children[1]->things->category);
-
-	
-	/* TOKEN test = Lex(); */
-	/* printf("\n%d ", test.token); */
-	/* //printf("\nThe number readen is %d\n", (int) *((int*) test.symtable)); */
-	/* test = Lex(); */
-	/* printf("%d ", test.token); */
-	/* printf("\nThe readen string is %s\n", (char*) test.symtable); */
-	/* test = Lex(); */
-	/* printf("%d ", test.token); */
-
-	// some linked list testing
-
-	/* symtableEntry *test1 = (symtableEntry*) malloc(sizeof(symtableEntry)); */
-	/* symtableEntry *test2 = (symtableEntry*) malloc(sizeof(symtableEntry)); */
-	/* if (1 == 1) { */
-	/* 	char mmname[10] = "abcdefghi\n"; */
-	/* 	char *mname; */
-	/* 	mname = (char*) malloc(sizeof(char) * 11); */
-	/* 	mname = mmname; */
-	/* 	test1->name = mname; */
-	/* } */
-
-	/* char mname = 'a'; */
-	/* test1->next = test2; */
-
-	/* char *sth = (char*) malloc(sizeof(char) * 5); */
-	/* sth = "abc\n"; */
-	/* test2->name = sth; */
-	/* test2->next = (void*) 0; */
-
-	/* symtableEntry *curr = test1; */
-	/* while (1) { */
-	/* 	printf("%s", curr->name); */
-	/* 	//curr = curr->next; */
-	/* 	if (curr->next == (void*) 0) break; */
-	/* 	curr = curr->next; */
-	/* } */
-
-	/* printf("%s", test1->next->name); */
+	printf("\n-----------------\n");
+	printf("    parsing      ");
+	printf("\n-----------------\n");
+	printf("Root node\n\n");
+	ReadParseTree(ParseRoot);
 	
 	printf("%c", '\n');
 	fclose(file);

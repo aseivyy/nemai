@@ -25,20 +25,21 @@ Also no code made by ai
 # Roadmap (for juuust the next 1000000 years)
 
 - [x] Lexer
-- [ ] Parser
+- [x] Parser
   - [x] Variable definitions
   - [x] Function definitions
-  - [ ] Function body
-  - [ ] Returning from functions
+  - [x] Function body
+  - [x] Returning from functions
 - [ ] Intermediate representation (probably will be skipped)
 - [ ] Assembly and/or machine code generation
-- [ ] Linking and making executable formats, like efi
+- [ ] Linking and making executable format (efi)
 - [ ] Adding more functionality
   - [ ] Assigning to variables
   - [ ] Math
+  - [ ] Function returning with a value
   - [ ] Basic optimization from time to time
   - [ ] Calling functions
-  - [ ] Pointers
+  - [ ] Pointers (to be honest i have been thinking that traditional pointers are stupid, what about just make a function that reads data from address from a variable, and function to get an address of a variable, no need for a literal sky with stars like "int ***whatever", no need for pointer types
   - [ ] Conditionals
   - [ ] Structs
   - [ ] Calling functions from a known address
@@ -46,5 +47,6 @@ Also no code made by ai
     - [ ] Comments
     - [ ] Headers
   - [ ] probably moreee but still a long time until here
+- [ ] Linking and making executable format (for nay)
 - [ ] Porting to nay
 - [ ] Self compile
