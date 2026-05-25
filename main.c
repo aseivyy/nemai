@@ -6,6 +6,8 @@ enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, less
 enum nodetypes { nroot, ndf, nret };
 enum types { tvar };
 
+enum ASM_FIRST { ADR, RET };
+
 typedef char STATUS;
 
 typedef struct {
@@ -61,6 +63,12 @@ parsetable* *ParseFamily;
 enum nodetypes *ParseFamilyType;
 int ParseFamilyMembers = 0;
 int *ParseFamilyFilled;
+
+/* Asm generation */
+int asmLines = 0;
+enum ASM_FIRST *asmFirst;
+char **asmSecond;
+char **asmThird;
 
 #define ERROR 1
 #define SUCCESS 0
@@ -497,6 +505,7 @@ STATUS Parse() {
 				ParseRoot->things[parselast]->things[0] = (parsetable*) malloc(sizeof(parsetable));
 				ParseRoot->things[parselast]->things[0]->state = 0;
 				ParseRoot->things[parselast]->type = ndf;
+				ParseRoot->things[parselast]->args = (functionTable**) malloc(sizeof(functionTable*));
 				
 				ParseFamily = (parsetable**) realloc(ParseFamily, sizeof(parsetable*) * 3);
 				ParseFamily[1] = curParseNode;
@@ -511,6 +520,8 @@ STATUS Parse() {
 				
 				(*lastNode) = (functionTable*) malloc(sizeof(functionTable));
 				(*lastNode)->next = (void*) 0;
+
+				((functionTable**) (ParseRoot->things[parselast]->args))[0] = (*lastNode);
 				
 				TOKEN fType = Lex();
 				if (fType.token != word) {
@@ -694,7 +705,7 @@ void ReadParseTree(parsetable *table) {
 		case nroot:
 			break;
 		case ndf:
-			printf("Function node\n");
+			printf("Function node with name \"%s\"\n", ((functionTable**) (table->things[i]->args))[0]->name);
 			ReadParseTree(table->things[i]);
 			printf("Function node end\n\n");
 			break;
@@ -707,8 +718,64 @@ void ReadParseTree(parsetable *table) {
 		}
 	}
 }
-	
 
+STATUS GenAsm(parsetable *table) {
+	for (int i = 0; table->things[i]->state != 0; i++) {
+		switch(table->things[i]->type) {
+		case nroot:
+			break;
+		case ndf:
+			/* On function start */
+			asmFirst = realloc(asmFirst, (sizeof(enum ASM_FIRST)) * (asmLines + 1));
+			asmSecond = realloc(asmSecond, sizeof(char*) * (asmLines + 1));
+			asmThird = realloc(asmThird, sizeof(char*) * (asmLines + 1));
+			
+			asmFirst[asmLines] = ADR;
+			asmSecond[asmLines] = ((functionTable**) (table->things[i]->args))[0]->name;
+			asmThird[asmLines] = (void*) 0;
+
+			asmLines++;
+
+			GenAsm(table->things[i]);
+			/* On function end */
+			break;
+		case nret:
+			asmFirst = realloc(asmFirst, (sizeof(enum ASM_FIRST)) * (asmLines + 1));
+			asmSecond = realloc(asmSecond, sizeof(char*) * (asmLines + 1));
+			asmThird = realloc(asmThird, sizeof(char*) * (asmLines + 1));
+			
+			asmFirst[asmLines] = RET;
+			asmSecond[asmLines] = (void*) 0;
+			asmThird[asmLines] = (void*) 0;
+
+			asmLines++;
+			break;
+		default:
+			break;
+		}
+	}
+	return SUCCESS;
+}
+
+void ReadAsm() {
+	printf("\n-----------------\n");
+	printf("|      ASM      |");
+	printf("\n-----------------\n");
+
+	for(int i = 0; i < asmLines; i++) {
+	        switch(asmFirst[i]) {
+		case ADR:
+			printf("ADR %s\n", asmSecond[i]);
+			break;
+		case RET:
+			printf("RET\n");
+			break;
+		default:
+			break;
+		}
+	}
+}
+	
 int main(int argc, char **argv) {
 	if (argc < 2) {
 		printf("nemai:Start \tPlease specify a file.");
@@ -739,19 +806,27 @@ int main(int argc, char **argv) {
 		return ERROR;
 	}
 
-	printf("\n[some kind of debugging things to prove that it works]\n");
-	printf("\nType of variable: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->things->type->name, SymtableRoot->things->name, SymtableRoot->things->category);
-	printf("\nType of the second variable: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->things->next->type->name, SymtableRoot->things->next->name, SymtableRoot->things->next->category);
-	printf("\nType of function: %s\nName of it: %s\n", FunctionRoot->next->type->name, FunctionRoot->next->name);
-	printf("\nType of the second function: %s\nName of it: %s\n", FunctionRoot->next->next->type->name, FunctionRoot->next->next->name);
-	printf("\nType of the var inside main func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[0]->things->type->name, SymtableRoot->children[0]->things->name, SymtableRoot->children[0]->things->category);
-	printf("\nType of the second var inside the main func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[0]->things->next->type->name, SymtableRoot->children[0]->things->next->name, SymtableRoot->children[0]->things->next->category);
-	printf("\nType of the var inside the second func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[1]->things->type->name, SymtableRoot->children[1]->things->name, SymtableRoot->children[1]->things->category);
+	/* Dont uncomment unless using the test.ni file */
+	/* printf("\n[some kind of debugging things to prove that it works]\n"); */
+	/* printf("\nType of variable: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->things->type->name, SymtableRoot->things->name, SymtableRoot->things->category); */
+	/* printf("\nType of the second variable: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->things->next->type->name, SymtableRoot->things->next->name, SymtableRoot->things->next->category); */
+	/* printf("\nType of function: %s\nName of it: %s\n", FunctionRoot->next->type->name, FunctionRoot->next->name); */
+	/* printf("\nType of the second function: %s\nName of it: %s\n", FunctionRoot->next->next->type->name, FunctionRoot->next->next->name); */
+	/* printf("\nType of the var inside main func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[0]->things->type->name, SymtableRoot->children[0]->things->name, SymtableRoot->children[0]->things->category); */
+	/* printf("\nType of the second var inside the main func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[0]->things->next->type->name, SymtableRoot->children[0]->things->next->name, SymtableRoot->children[0]->things->next->category); */
+	/* printf("\nType of the var inside the second func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[1]->things->type->name, SymtableRoot->children[1]->things->name, SymtableRoot->children[1]->things->category); */
+	
 	printf("\n-----------------\n");
 	printf("    parsing      ");
 	printf("\n-----------------\n");
 	printf("Root node\n\n");
 	ReadParseTree(ParseRoot);
+
+	if (GenAsm(ParseRoot) == ERROR) {
+		return ERROR;
+	}
+
+	ReadAsm();
 	
 	printf("%c", '\n');
 	fclose(file);
