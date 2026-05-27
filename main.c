@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, obracket_block, cbracket_block, obracket_sub, cbracket_sub, add, sub, mult, divide, number, word, kif, kfi, ret, df, dv };
-enum nodetypes { nroot, ndf, nret };
+enum nodetypes { nroot, ndf, nret, nnum };
 enum types { tvar };
 
 enum ASM_FIRST { ADR, RET };
@@ -115,6 +115,9 @@ int osText = 0;
 int sString = 0;
 
 const char BIN_RET = 0xC3;
+const char REX_W = 0x48;
+const char MOV_IMM_REG = 0xB8;
+const char REG_AX = 0x0;
 
 #define ERROR 1
 #define SUCCESS 0
@@ -127,7 +130,7 @@ char isNum(char c) {
 	return 0;
 }
 
-int charToNum(char c) {
+int64_t charToNum(char c) {
 	return c - '0';
 }
 
@@ -282,7 +285,7 @@ TOKEN Lex() {
 	}
 
 	if (isNum(c) == 1) {
-		int num = charToNum(c);
+		int64_t num = charToNum(c);
 		char next = fgetc(file);
 		
 		while (isNum(next) == 1) {
@@ -294,8 +297,8 @@ TOKEN Lex() {
 
 		TOKEN token;
 		token.token = number;
-		token.symtable = (int*) malloc(sizeof(int));
-		*((int*) token.symtable) = num;
+		token.symtable = (int64_t*) malloc(sizeof(int64_t));
+		*((int64_t*) token.symtable) = num;
 		return token;
 	}
 
@@ -684,6 +687,9 @@ STATUS Parse() {
 				curParseNode->state = 1;
 				curParseNode->things = (void*) 0;
 				curParseNode->type = nret;
+				curParseNode->things = (parsetable**) malloc(sizeof(parsetable*));
+				curParseNode->things[0] = (parsetable*) malloc(sizeof(parsetable));
+				curParseNode->things[0]->state = 0;
 
 				int ParseFamilyMembers = 0;
 				while (ParseFamily[ParseFamilyMembers] != (void*) 0) {
@@ -701,6 +707,23 @@ STATUS Parse() {
 				return ERROR;
 			}
 
+		} else if (i.token == number) {
+			if (curParseNode->type == nret) {
+				if (curParseNode->things[0]->state != 0) {
+					printf("nemai:Parse \tAttempt to return more than one value on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+				
+				curParseNode->things[0]->state = 1;
+				curParseNode->things[0]->type = nnum;
+				curParseNode->things[0]->args = (int64_t*) malloc(sizeof(int64_t));
+				((int64_t*) (curParseNode->things[0]->args))[0] = *((int64_t*) i.symtable);
+			} else {
+				printf("nemai:Parse \tAttempt to use a mumber in unknown way on line %d", lexLine);
+				printf("%c", '\n');
+				return ERROR;
+			}
 		} else if (i.token == cbracket_block) {
 			if (curParseNode->type != nret) {
 				int SymtableFamilyMembers = 0;
@@ -801,19 +824,41 @@ STATUS GenAsm(parsetable *table) {
 			/* On function end */
 			break;
 		case nret:
-			asmFirst = realloc(asmFirst, (sizeof(enum ASM_FIRST)) * (asmLines + 1));
-			asmSecond = realloc(asmSecond, sizeof(char*) * (asmLines + 1));
-			asmThird = realloc(asmThird, sizeof(char*) * (asmLines + 1));
+			if (table->things[i]->things[0]->state == 0) {
+				asmFirst = realloc(asmFirst, (sizeof(enum ASM_FIRST)) * (asmLines + 1));
+				asmSecond = realloc(asmSecond, sizeof(char*) * (asmLines + 1));
+				asmThird = realloc(asmThird, sizeof(char*) * (asmLines + 1));
 			
-			asmFirst[asmLines] = RET;
-			asmSecond[asmLines] = (void*) 0;
-			asmThird[asmLines] = (void*) 0;
+				asmFirst[asmLines] = RET;
+				asmSecond[asmLines] = (void*) 0;
+				asmThird[asmLines] = (void*) 0;
 
-			textSize++;
-			asmLines++;
-			osText++;
+				fwrite(&BIN_RET, 1, 1, out);
 
-			fwrite(&BIN_RET, 1, 1, out);
+				textSize++;
+				asmLines++;
+				osText++;
+			} else {
+				asmFirst = realloc(asmFirst, (sizeof(enum ASM_FIRST)) * (asmLines + 2));
+				asmSecond = realloc(asmSecond, sizeof(char*) * (asmLines + 2));
+				asmThird = realloc(asmThird, sizeof(char*) * (asmLines + 2));
+			
+				asmFirst[asmLines] = RET;
+				asmSecond[asmLines] = (void*) 0;
+				asmThird[asmLines] = (void*) 0;
+
+				char opcode = MOV_IMM_REG + REG_AX;
+				int64_t retValue = ((int64_t*) (table->things[i]->things[0]->args))[0];
+				fwrite(&REX_W, 1, 1, out);
+				fwrite(&opcode, 1, 1, out);
+				fwrite(&retValue, 8, 1, out);
+				
+				fwrite(&BIN_RET, 1, 1, out);
+
+				textSize += 11;
+				asmLines++;
+				osText += 11;
+			}
 			
 			break;
 		default:
