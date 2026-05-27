@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, obracket_block, cbracket_block, obracket_sub, cbracket_sub, add, sub, mult, divide, number, word, kif, kfi, ret, df, dv };
 enum nodetypes { nroot, ndf, nret };
@@ -47,6 +48,39 @@ typedef struct functionTable_s {
 	struct functionTable_s *next;
 } functionTable;
 
+typedef struct {
+	uint16_t Machine;
+	uint16_t nSections;
+	uint32_t Time;
+	uint32_t oSymTable;
+	uint32_t nSymbols;
+	uint16_t sOptHeader;
+	uint16_t Flags;
+} CoffHeader;
+
+typedef struct {
+	uint8_t Name[8];
+	uint32_t sVirt;
+	uint32_t oVirt;
+	uint32_t sRaw;
+	uint32_t oRaw;
+	uint32_t oRelocations;
+	uint32_t oLineNumbers;
+	uint16_t nRelocations;
+	uint16_t nLineNumbers;
+	uint32_t Flags;
+} CoffSectionHeader;
+
+typedef struct {
+	uint32_t Zero;
+	uint32_t oName;
+	uint32_t osValue;
+	uint16_t xSection;
+	uint16_t Type;
+	uint8_t Class;
+	uint8_t nAux;
+} __attribute__((packed)) CoffSymbolEntry;
+
 typelist *Typelist;
 int nTypes;
 
@@ -70,10 +104,23 @@ enum ASM_FIRST *asmFirst;
 char **asmSecond;
 char **asmThird;
 
+CoffHeader coffHeader;
+CoffSectionHeader coffSectionHeader;
+CoffSymbolEntry *coffSymbolEntries;
+char *coffString;
+
+uint32_t textSize = 0;
+int nSymbols = 0;
+int osText = 0;
+int sString = 0;
+
+const char BIN_RET = 0xC3;
+
 #define ERROR 1
 #define SUCCESS 0
 
 FILE *file;
+FILE *out;
 
 char isNum(char c) {
 	if (c == '0' || c == '1' || c == '2' || c == '3' || c == '4' || c == '5' || c == '6' || c == '7' || c == '8' || c == '9') return 1;
@@ -682,7 +729,7 @@ STATUS LexSetup(char *filename) {
 	lexLine = 1;
 	
 	if (file == NULL) {
-		printf("nemai:LexSetup \tFile doesn't exist or couldn't be opened.");
+		printf("nemai:LexSetup \tFile doesn't exist or couldn't be opened");
 		printf("%c", '\n');
 		return ERROR;
 	}
@@ -735,6 +782,20 @@ STATUS GenAsm(parsetable *table) {
 			asmThird[asmLines] = (void*) 0;
 
 			asmLines++;
+			nSymbols++;
+
+			coffSymbolEntries = realloc(coffSymbolEntries, sizeof(CoffSymbolEntry) * nSymbols);
+			coffSymbolEntries[nSymbols - 1].oName = sString;
+			coffSymbolEntries[nSymbols - 1].Zero = 0;
+			coffSymbolEntries[nSymbols - 1].osValue = osText;
+			coffSymbolEntries[nSymbols - 1].xSection = 1;
+			coffSymbolEntries[nSymbols - 1].Type = 0x20;
+			coffSymbolEntries[nSymbols - 1].Class = 2;
+			coffSymbolEntries[nSymbols - 1].nAux = 0;
+
+			coffString = realloc(coffString, sString + strlen(((functionTable**) (table->things[i]->args))[0]->name) + 1);
+			strcpy(coffString + sString, ((functionTable**) (table->things[i]->args))[0]->name);
+			sString += strlen(((functionTable**) (table->things[i]->args))[0]->name) + 1;
 
 			GenAsm(table->things[i]);
 			/* On function end */
@@ -748,7 +809,12 @@ STATUS GenAsm(parsetable *table) {
 			asmSecond[asmLines] = (void*) 0;
 			asmThird[asmLines] = (void*) 0;
 
+			textSize++;
 			asmLines++;
+			osText++;
+
+			fwrite(&BIN_RET, 1, 1, out);
+			
 			break;
 		default:
 			break;
@@ -775,7 +841,82 @@ void ReadAsm() {
 		}
 	}
 }
+
+STATUS AsmWriteSetup(char *name) {
+	char *outName;
+	outName = (char*) malloc(strlen(name) + strlen(".obj") + 1);
+	strcpy(outName, name);
+	strcat(outName, ".obj");
 	
+	out = fopen(outName, "wb");
+	
+	if (out == NULL) {
+		printf("nemai:AsmWrite \tCouldn't write to a file");
+		printf("%c", '\n');
+		return ERROR;
+	}
+
+	coffHeader.Machine = 0x8664;
+	coffHeader.nSections = 1;
+	coffHeader.Time = 0;
+	coffHeader.oSymTable = 0;
+	coffHeader.nSymbols = 0;
+	coffHeader.sOptHeader = 0;
+	coffHeader.Flags = 0;
+
+        strncpy((char*) &(coffSectionHeader.Name[0]), ".text\0\0\0", 8);
+	coffSectionHeader.sVirt = 0;
+	coffSectionHeader.oVirt = 0;
+	coffSectionHeader.oRaw = sizeof(CoffSectionHeader) + sizeof(CoffHeader);
+	coffSectionHeader.oRelocations = 0;
+	coffSectionHeader.oLineNumbers = 0;
+	coffSectionHeader.nRelocations = 0;
+	coffSectionHeader.nLineNumbers = 0;
+	coffSectionHeader.Flags = 0x00000020 | 0x20000000;
+
+	fwrite(&coffHeader, sizeof(CoffHeader), 1, out);
+	fwrite(&coffSectionHeader, sizeof(CoffSectionHeader), 1, out);
+	
+	return SUCCESS;
+}
+
+STATUS AsmMake(char *name) {
+	coffSymbolEntries = (CoffSymbolEntry*) malloc(sizeof(CoffSymbolEntry));
+	coffString = (char*) malloc(sizeof(char) * 4);
+	sString = 4;
+	
+	if (AsmWriteSetup(name) == ERROR) {
+		return ERROR;
+	}
+
+	if (GenAsm(ParseRoot) == ERROR) {
+		return ERROR;
+	}
+		
+	fseek(out, 36, SEEK_SET);
+	fwrite(&textSize, 4, 1, out);
+	fseek(out, 0, SEEK_END);
+
+	for (int i = 0; i < nSymbols; i++) {
+		fwrite(&(coffSymbolEntries[i]), sizeof(CoffSymbolEntry), 1, out);
+	}
+
+	int osSymTable = sizeof(CoffHeader) + sizeof(CoffSectionHeader) + textSize;
+	fseek(out, 8, SEEK_SET);
+	fwrite(&osSymTable, 4, 1, out);
+	printf("\n%d ", osSymTable);
+	
+	fseek(out, 12, SEEK_SET);
+	fwrite(&nSymbols, 4, 1, out);
+
+	fseek(out, 0, SEEK_END);
+
+	fwrite(&sString, 4, 1, out);
+	fwrite(coffString + 4, sString - 4, 1, out);
+	
+	return SUCCESS;
+}
+
 int main(int argc, char **argv) {
 	if (argc < 2) {
 		printf("nemai:Start \tPlease specify a file.");
@@ -822,13 +963,14 @@ int main(int argc, char **argv) {
 	printf("Root node\n\n");
 	ReadParseTree(ParseRoot);
 
-	if (GenAsm(ParseRoot) == ERROR) {
+	if (AsmMake(argv[1]) == ERROR) {
 		return ERROR;
 	}
-
+       
 	ReadAsm();
 	
 	printf("%c", '\n');
 	fclose(file);
+	fclose(out);
 	return SUCCESS;
 }
