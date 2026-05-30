@@ -34,7 +34,7 @@ Also no code made by ai
 - [x] Creating object files
 - [ ] Adding more functionality (with just general order)
   - [ ] Assigning to variables
-  - [ ] Math
+  - [x] Math
   - [ ] Function returning with a value
   - [ ] Basic optimization from time to time
   - [ ] Calling functions
@@ -46,6 +46,8 @@ Also no code made by ai
   - [ ] Precompiler
     - [ ] Comments
     - [ ] Headers
+  - [ ] Floats
+  - [ ] Negative values
   - [ ] probably moreee but still a long time until here
 - [ ] Linking and making executable format (for nay)
 - [ ] Porting to nay

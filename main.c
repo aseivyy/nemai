@@ -3,11 +3,9 @@
 #include <string.h>
 #include <stdint.h>
 
-enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, obracket_block, cbracket_block, obracket_sub, cbracket_sub, add, sub, mult, divide, number, word, kif, kfi, ret, df, dv };
-enum nodetypes { nroot, ndf, nret, nnum };
+enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, obracket_block, cbracket_block, obracket_sub, cbracket_sub, number, word, kif, kfi, ret, df, dv, add, sub, mult, divide };
+enum nodetypes { nroot, ndf, nret, nnum, nadd, nsub, nmult, ndivide };
 enum types { tvar };
-
-enum ASM_FIRST { ADR, RET };
 
 typedef char STATUS;
 
@@ -99,11 +97,6 @@ int ParseFamilyMembers = 0;
 int *ParseFamilyFilled;
 
 /* Asm generation */
-int asmLines = 0;
-enum ASM_FIRST *asmFirst;
-char **asmSecond;
-char **asmThird;
-
 CoffHeader coffHeader;
 CoffSectionHeader coffSectionHeader;
 CoffSymbolEntry *coffSymbolEntries;
@@ -114,10 +107,23 @@ int nSymbols = 0;
 int osText = 0;
 int sString = 0;
 
-const char BIN_RET = 0xC3;
-const char REX_W = 0x48;
+const char RET = 0xC3;
+const char PUSH = 0x50;
+const char POP = 0x58;
+const char XCHG = 0x87;
+
 const char MOV_IMM_REG = 0xB8;
+const char ADD_RM_REG = 0x03;
+const char SUB_RM_REG = 0x2B;
+const char MUL_RM_REG = 0xF7;
+const char DIV_RM_REG = 0xF7;
+
+const char REX_W = 0x48;
+
 const char REG_AX = 0x0;
+const char REG_BX = 0x3;
+const char REG_CX = 0x1;
+const char REG_DX = 0x2;
 
 #define ERROR 1
 #define SUCCESS 0
@@ -634,21 +640,22 @@ STATUS Parse() {
 				(*lastNode)->name = realloc((*lastNode)->name, sizeof(char) * (nchars + 2));
 				(*lastNode)->name[nchars + 1] = '\0';
 
-				symtable **symtableChildChecker = SymtableRoot->children;
 				int toPlace = 0;
-				for (int i = 0; symtableChildChecker[i] != (void*) 0; i++) {
+				for (int i = 0; SymtableRoot->children[i] != (void*) 0; i++) {
 					toPlace = i + 1;
 				}
+
+				SymtableRoot->children = (symtable**) realloc(SymtableRoot->children, sizeof(symtable*) * (toPlace + 2));
 
 				symtable *NewSymtable = (symtable*) malloc(sizeof(symtable));
 				NewSymtable->nthings = 0;
 				
-				symtableChildChecker[toPlace+1] = (void*) 0;
+				SymtableRoot->children[toPlace+1] = (void*) 0;
 
 				NewSymtable->children = (symtable**) malloc(sizeof(symtable*));
 				*(NewSymtable->children) = (void*) 0;
 
-				symtableChildChecker[toPlace] = NewSymtable;
+				SymtableRoot->children[toPlace] = NewSymtable;
 
 				SymtableFamily = (symtable**) realloc(SymtableFamily, sizeof(symtable*) * 3);
 				SymtableFamily[2] = (void*) 0;
@@ -673,7 +680,7 @@ STATUS Parse() {
 						if (paramType.token != cbracket_sub) paramName = Lex();
 					}
 				}
-			} else if (node.token == ret) {
+			} else if (node.token == ret || node.token == add || node.token == sub || node.token == mult || node.token == divide ) {
 				int parselast = 0;
 				for (int i = 0; curParseNode->things[i]->state != 0; i++) {
 					parselast = i + 1;
@@ -685,8 +692,27 @@ STATUS Parse() {
 
 				curParseNode = curParseNode->things[parselast];
 				curParseNode->state = 1;
-				curParseNode->things = (void*) 0;
-				curParseNode->type = nret;
+
+				switch (node.token) {
+				case ret:
+					curParseNode->type = nret;
+					break;
+				case add:
+					curParseNode->type = nadd;
+					break;
+				case sub:
+					curParseNode->type = nsub;
+					break;
+				case mult:
+					curParseNode->type = nmult;
+					break;
+				case divide:
+					curParseNode->type = ndivide;
+					break;
+				default:
+					break;
+				}
+
 				curParseNode->things = (parsetable**) malloc(sizeof(parsetable*));
 				curParseNode->things[0] = (parsetable*) malloc(sizeof(parsetable));
 				curParseNode->things[0]->state = 0;
@@ -699,7 +725,6 @@ STATUS Parse() {
 				ParseFamily = (parsetable**) realloc(ParseFamily, sizeof(parsetable*) * (ParseFamilyMembers + 2));
 				ParseFamily[ParseFamilyMembers] = curParseNode;
 				ParseFamily[ParseFamilyMembers + 1] = (void*) 0;
-				
 			} else if (node.token <= word) {
 				// add support for user made functios later and dont forget it
 				printf("nemai:Parse \tAttempt to call an undefined function on line %d", lexLine);
@@ -714,25 +739,46 @@ STATUS Parse() {
 					printf("%c", '\n');
 					return ERROR;
 				}
-				
-				curParseNode->things[0]->state = 1;
-				curParseNode->things[0]->type = nnum;
-				curParseNode->things[0]->args = (int64_t*) malloc(sizeof(int64_t));
-				((int64_t*) (curParseNode->things[0]->args))[0] = *((int64_t*) i.symtable);
-			} else {
-				printf("nemai:Parse \tAttempt to use a mumber in unknown way on line %d", lexLine);
-				printf("%c", '\n');
-				return ERROR;
 			}
+
+			int parselast = 0;
+			for (int i = 0; curParseNode->things[i]->state != 0; i++) {
+				parselast = i + 1;
+			}
+
+			curParseNode->things = (parsetable**) realloc(curParseNode->things, sizeof(parsetable*) * (parselast + 2));
+			curParseNode->things[parselast + 1] = (parsetable*) malloc(sizeof(parsetable));
+			curParseNode->things[parselast + 1]->state = 0;
+
+			curParseNode->things[parselast]->state = 1;
+			curParseNode->things[parselast]->things = (void*) 0;
+			curParseNode->things[parselast]->type = nnum;
+
+			curParseNode->things[parselast]->args = (int64_t*) malloc(sizeof(int64_t));
+			((int64_t*) (curParseNode->things[parselast]->args))[0] = *((int64_t*) i.symtable);
+			
 		} else if (i.token == cbracket_block) {
-			if (curParseNode->type != nret) {
+			if (curParseNode->type != nret && curParseNode->type != nadd && curParseNode->type != nsub && curParseNode->type != nmult && curParseNode->type != ndivide ) {
 				int SymtableFamilyMembers = 0;
 				while (SymtableFamily[SymtableFamilyMembers] != (void*) 0) {
 					SymtableFamilyMembers++;
 				}
 				curNode = SymtableFamily[SymtableFamilyMembers - 2];
-				SymtableFamily = (symtable**) realloc(SymtableFamily, sizeof(symtable*) * (SymtableFamilyMembers - 1));
+				SymtableFamily = (symtable**) realloc(SymtableFamily, sizeof(symtable*) * SymtableFamilyMembers);
 				SymtableFamily[SymtableFamilyMembers - 1] = (void*) 0;
+			}
+
+			if (curParseNode->type == nadd || curParseNode->type == nsub || curParseNode->type == nmult || curParseNode->type == ndivide) {
+				int nThings = 0;
+				for (int i = 0; curParseNode->things[i]->state != 0; i++) {
+					nThings = i + 1;
+				}
+
+				if (nThings < 2) {
+					printf("nemai:Parse \tAttempt to perform a math operation on less than 2 arguments on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
 			}
 				
 			int ParseFamilyMembers = 0;
@@ -740,7 +786,7 @@ STATUS Parse() {
 				ParseFamilyMembers++;
 			}
 			curParseNode = ParseFamily[ParseFamilyMembers - 2];
-			ParseFamily = (parsetable**) realloc(ParseFamily, sizeof(parsetable*) * (ParseFamilyMembers - 1));
+			ParseFamily = (parsetable**) realloc(ParseFamily, sizeof(parsetable*) * ParseFamilyMembers);
 			ParseFamily[ParseFamilyMembers - 1] = (void*) 0;
 		}
 	}
@@ -789,22 +835,103 @@ void ReadParseTree(parsetable *table) {
 	}
 }
 
+void GenAsmMov(int64_t Value) {
+	char opcode = MOV_IMM_REG + REG_AX;
+	int64_t *retValue = (int64_t*) malloc(sizeof(int64_t));
+	*retValue = Value;
+			
+	fwrite(&REX_W, 1, 1, out);
+	fwrite(&opcode, 1, 1, out);
+	fwrite(retValue, 8, 1, out);
+
+	textSize += 10;
+	osText += 10;
+}
+
+void GenAsmPush() {
+	fwrite(&PUSH, 1, 1, out);
+
+	textSize++;
+	osText++;
+}
+
+void GenAsmPop(const char *reg) {
+	char opcode = POP + *reg;
+
+	fwrite(&opcode, 1, 1, out);
+
+	textSize++;
+	osText++;
+}
+
+void GenAsmAdd(const char *reg_dest, const char *reg_sec) {
+	char modrm = 0b11000000;
+	modrm = (modrm | (*reg_dest << 3)) | *reg_sec;
+
+	fwrite(&REX_W, 1, 1, out);
+	fwrite(&ADD_RM_REG, 1, 1, out);
+	fwrite(&modrm, 1, 1, out);
+
+	textSize += 3;
+	osText += 3;
+}
+
+void GenAsmSub(const char *reg_dest, const char *reg_sec) {
+	char modrm = 0b11000000;
+	modrm = (modrm | (*reg_dest << 3)) | *reg_sec;
+
+	fwrite(&REX_W, 1, 1, out);
+	fwrite(&SUB_RM_REG, 1, 1, out);
+	fwrite(&modrm, 1, 1, out);
+
+	textSize += 3;
+	osText += 3;
+}
+
+void GenAsmMult(const char *reg_mult) {
+	char modrm = 0b11100000;
+	modrm = modrm | *reg_mult;
+
+	fwrite(&REX_W, 1, 1, out);
+	fwrite(&MUL_RM_REG, 1, 1, out);
+	fwrite(&modrm, 1, 1, out);
+
+	textSize += 3;
+	osText += 3;
+}
+
+void GenAsmDivide(const char *reg_div) {
+	char modrm = 0b11110000;
+	modrm = modrm | *reg_div;
+
+	fwrite(&REX_W, 1, 1, out);
+	fwrite(&DIV_RM_REG, 1, 1, out);
+	fwrite(&modrm, 1, 1, out);
+
+	textSize += 3;
+	osText += 3;
+}
+
+void GenAsmXchg(const char *rm, const char *rm2) {
+	char modrm = 0b11000000;
+	modrm = (modrm | (*rm << 3)) | *rm2;
+
+	fwrite(&REX_W, 1, 1, out);
+	fwrite(&XCHG, 1, 1, out);
+	fwrite(&modrm, 1, 1, out);
+
+	textSize += 3;
+	osText += 3;
+}
+
 STATUS GenAsm(parsetable *table) {
+	int nChildren = 0;
 	for (int i = 0; table->things[i]->state != 0; i++) {
 		switch(table->things[i]->type) {
 		case nroot:
 			break;
 		case ndf:
 			/* On function start */
-			asmFirst = realloc(asmFirst, (sizeof(enum ASM_FIRST)) * (asmLines + 1));
-			asmSecond = realloc(asmSecond, sizeof(char*) * (asmLines + 1));
-			asmThird = realloc(asmThird, sizeof(char*) * (asmLines + 1));
-			
-			asmFirst[asmLines] = ADR;
-			asmSecond[asmLines] = ((functionTable**) (table->things[i]->args))[0]->name;
-			asmThird[asmLines] = (void*) 0;
-
-			asmLines++;
 			nSymbols++;
 
 			coffSymbolEntries = realloc(coffSymbolEntries, sizeof(CoffSymbolEntry) * nSymbols);
@@ -824,67 +951,87 @@ STATUS GenAsm(parsetable *table) {
 			/* On function end */
 			break;
 		case nret:
-			if (table->things[i]->things[0]->state == 0) {
-				asmFirst = realloc(asmFirst, (sizeof(enum ASM_FIRST)) * (asmLines + 1));
-				asmSecond = realloc(asmSecond, sizeof(char*) * (asmLines + 1));
-				asmThird = realloc(asmThird, sizeof(char*) * (asmLines + 1));
+			GenAsm(table->things[i]);
 			
-				asmFirst[asmLines] = RET;
-				asmSecond[asmLines] = (void*) 0;
-				asmThird[asmLines] = (void*) 0;
+			fwrite(&RET, 1, 1, out);
 
-				fwrite(&BIN_RET, 1, 1, out);
+			textSize++;
+			osText++;
+			break;
+		case nnum:
+			GenAsmMov(((int64_t*) (table->things[i]->args))[0]);
+			break;
+		case nadd:
+			GenAsm(table->things[i]);
+			break;
+		case nsub:
+			GenAsm(table->things[i]);
+			break;
+		case nmult:
+			GenAsm(table->things[i]);
+			break;
+		case ndivide:
+			GenAsm(table->things[i]);
+			break;
+		default:
+			break;
+		}
 
-				textSize++;
-				asmLines++;
-				osText++;
-			} else {
-				asmFirst = realloc(asmFirst, (sizeof(enum ASM_FIRST)) * (asmLines + 2));
-				asmSecond = realloc(asmSecond, sizeof(char*) * (asmLines + 2));
-				asmThird = realloc(asmThird, sizeof(char*) * (asmLines + 2));
-			
-				asmFirst[asmLines] = RET;
-				asmSecond[asmLines] = (void*) 0;
-				asmThird[asmLines] = (void*) 0;
+		if (table->type == nadd || table->type == nsub || table->type == nmult || table->type == ndivide) {
+			GenAsmPush();
+		}
+		
+		nChildren++;
+	}
+	
+	if (table->type == nadd || table->type == nmult) {
+		GenAsmPop(&REG_AX);
 
-				char opcode = MOV_IMM_REG + REG_AX;
-				int64_t retValue = ((int64_t*) (table->things[i]->things[0]->args))[0];
-				fwrite(&REX_W, 1, 1, out);
-				fwrite(&opcode, 1, 1, out);
-				fwrite(&retValue, 8, 1, out);
-				
-				fwrite(&BIN_RET, 1, 1, out);
+		for (int i = 0; i < nChildren - 1; i++) {
+			GenAsmPop(&REG_BX);
 
-				textSize += 11;
-				asmLines++;
-				osText += 11;
+			switch (table->type) {
+			case nadd:
+				GenAsmAdd(&REG_AX, &REG_BX);
+				break;
+			case nmult:
+				GenAsmMult(&REG_BX);
+				break;
+			default:
+				break;
 			}
-			
-			break;
-		default:
-			break;
+		}	
+	}
+
+	if (table->type == nsub || table->type == ndivide) {
+		GenAsmPop(&REG_AX);
+
+		for (int i = 0; i < nChildren - 2; i++) {
+			GenAsmPop(&REG_BX);
+
+			switch (table->type) {
+			case nsub:
+				GenAsmAdd(&REG_AX, &REG_BX);
+				break;
+			case ndivide:
+				GenAsmMult(&REG_BX);
+				break;
+			default:
+				break;
+			}
+		}
+
+		GenAsmPop(&REG_BX);
+		GenAsmXchg(&REG_AX, &REG_BX);
+
+		if (table->type == nsub) {
+			GenAsmSub(&REG_AX, &REG_BX);
+		} else {
+			GenAsmDivide(&REG_BX);
 		}
 	}
+	
 	return SUCCESS;
-}
-
-void ReadAsm() {
-	printf("\n-----------------\n");
-	printf("|      ASM      |");
-	printf("\n-----------------\n");
-
-	for(int i = 0; i < asmLines; i++) {
-	        switch(asmFirst[i]) {
-		case ADR:
-			printf("ADR %s\n", asmSecond[i]);
-			break;
-		case RET:
-			printf("RET\n");
-			break;
-		default:
-			break;
-		}
-	}
 }
 
 STATUS AsmWriteSetup(char *name) {
@@ -1001,18 +1148,17 @@ int main(int argc, char **argv) {
 	/* printf("\nType of the var inside main func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[0]->things->type->name, SymtableRoot->children[0]->things->name, SymtableRoot->children[0]->things->category); */
 	/* printf("\nType of the second var inside the main func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[0]->things->next->type->name, SymtableRoot->children[0]->things->next->name, SymtableRoot->children[0]->things->next->category); */
 	/* printf("\nType of the var inside the second func: %s\nName of it: %s\nCategory of it: %d\n", SymtableRoot->children[1]->things->type->name, SymtableRoot->children[1]->things->name, SymtableRoot->children[1]->things->category); */
-	
-	printf("\n-----------------\n");
-	printf("    parsing      ");
-	printf("\n-----------------\n");
-	printf("Root node\n\n");
-	ReadParseTree(ParseRoot);
+
+	/* Uncomment for the parse tree reading */
+	/* printf("\n-----------------\n"); */
+	/* printf("    parsing      "); */
+	/* printf("\n-----------------\n"); */
+	/* printf("Root node\n\n"); */
+	/* ReadParseTree(ParseRoot); */
 
 	if (AsmMake(argv[1]) == ERROR) {
 		return ERROR;
 	}
-       
-	ReadAsm();
 	
 	printf("%c", '\n');
 	fclose(file);
