@@ -1,6 +1,13 @@
-(df ^64 main[]
-    (ret (/ (- (+ 4 (* 2 2)) 4) 4)))
+(df main[]
+    (dv ^u miao)
+    (dv ^u diao)
+    (dv ^u xiao)
+    (av xiao 4)
+    (av diao 2)
+    (av miao (- xiao diao))
+    (ret (+ (* 2 2) miao)))
 
-(df ^32 printf_no_scam[]
+(df printf_no_scam[]
     (ret)
     (ret))
+    
