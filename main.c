@@ -3,9 +3,8 @@
 #include <string.h>
 #include <stdint.h>
 
-enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, obracket_block, cbracket_block, obracket_sub, cbracket_sub, number, word, kif, kfi, ret, df, dv, av, add, sub, mult, divide };
-enum nodetypes { nroot, ndf, nret, nnum, nadd, nsub, nmult, ndivide, ndv, nav, nrv };
-enum types { tvar };
+enum tokens { error, eof, equal, isequal, isnequal, greater, greater_equal, lesser, lesser_equal, obracket_block, cbracket_block, obracket_sub, cbracket_sub, number, word, kif, kfi, ret, df, dv, av, add, sub, mult, divide, ga, aa, sp, ds, ase, rse };
+enum nodetypes { nroot, ndf, nret, nnum, nadd, nsub, nmult, ndivide, nav, nrv, nga, naa, nasen, nasea, nrsen, nrsea };
 
 typedef char STATUS;
 
@@ -30,8 +29,9 @@ typedef struct parsetable_s {
 
 typedef struct symtableEntry_s {
 	char* name;
+	/* typelist in normal vars, pointer to struct table in structs */
 	typelist *type;
-	enum types category;
+	int size;
 	struct symtableEntry_s *next;
 } symtableEntry;
 
@@ -48,12 +48,18 @@ typedef struct functionTable_s {
 	struct functionTable_s *next;
 } functionTable;
 
-typedef struct oVar_s {
-	symtableEntry *var;
-	int offset;
-	struct oVar_s *next;
-} oVar;
+typedef struct structTableEntry_s{
+	typelist *type;
+	char *name;
+	struct structTableEntry_s *next;
+} structTableEntry;
 
+typedef struct structTable_s {
+	char *name;
+	structTableEntry *elements;
+	struct structTable_s *next;
+} structTable;
+	
 typedef struct {
 	uint16_t Machine;
 	uint16_t nSections;
@@ -97,7 +103,12 @@ symtable* *SymtableFamily;
 
 functionTable *FunctionRoot;
 
+structTable *StructRoot;
+
 int lexLine = 1;
+int lexOBracket = 0;
+int lexNum = 0;
+int64_t lexNumData = 0;
 
 parsetable* *ParseFamily;
 enum nodetypes *ParseFamilyType;
@@ -119,10 +130,13 @@ const char RET = 0xC3;
 const char PUSH = 0x50;
 const char POP = 0x58;
 const char XCHG = 0x87;
+const char LEA = 0x8D;
 
 const char MOV_RM_REG = 0x8B;
 const char MOV_IMM_REG = 0xB8;
 const char MOV_REG_RM = 0x89;
+const int16_t MOVZX_RM8_REG = 0xB60F;
+const int16_t MOVZX_RM16_REG = 0xB70F;
 const char ADD_RM_REG = 0x03;
 const char ADD_IMM_REG = 0x81;
 const char SUB_RM_REG = 0x2B;
@@ -131,6 +145,7 @@ const char MUL_RM_REG = 0xF7;
 const char DIV_RM_REG = 0xF7;
 
 const char REX_W = 0x48;
+const char PREFIX_16B = 0x66;
 
 const char REG_AX = 0x0;
 const char REG_BX = 0x3;
@@ -165,10 +180,33 @@ enum tokens isKeyword(char *s) {
 	if (strcmp(s, "df") == 0) return df;
 	if (strcmp(s, "dv") == 0) return dv;
 	if (strcmp(s, "av") == 0) return av;
+	if (strcmp(s, "ga") == 0) return ga;
+	if (strcmp(s, "aa") == 0) return aa;
+	if (strcmp(s, "sp") == 0) return sp;
+	if (strcmp(s, "ds") == 0) return ds;
+	if (strcmp(s, "rse") == 0) return rse;
+	if (strcmp(s, "ase") == 0) return ase;
 	return word;
 }
 
 TOKEN Lex() {
+	if (lexOBracket != 0) {
+		lexOBracket = 0;
+		
+		TOKEN token;
+		token.token = obracket_block;
+		token.symtable = (void*) 0;
+		return token;
+	} else if (lexNum != 0) {
+		lexNum = 0;
+		
+		TOKEN token;
+		token.token = number;
+		token.symtable = (int64_t*) malloc(sizeof(int64_t));
+		*((int64_t*) token.symtable) = lexNumData;
+		return token;
+	}
+	
 	char c;
 	do {
 		c = fgetc(file);
@@ -370,7 +408,7 @@ void BaseTypeSetup() {
 	nTypes = 5;
 	Typelist->name = (char*) malloc(sizeof(char) * 3);
 	strcpy(Typelist->name, "^u");
-	Typelist->size = 0;
+	Typelist->size = 64;
 	Typelist->isASize = 0;
 
 	typelist *b8 = (typelist*) malloc(sizeof(typelist));
@@ -413,7 +451,7 @@ STATUS addVar(symtable **pcurNode, TOKEN *type, TOKEN *name) {
 	*lastEntry = (symtableEntry*) malloc(sizeof(symtableEntry));
 	
 	if (type->token != word) {
-		printf("nemai:Parse \tVariable type isn't a type on line %d", lexLine);
+		printf("nemai: \tVariable type isn't a type on line %d", lexLine);
 		printf("%c", '\n');
 		return ERROR;
 	}
@@ -431,13 +469,13 @@ STATUS addVar(symtable **pcurNode, TOKEN *type, TOKEN *name) {
 		}
 	}
 	if (isAType < 1) {
-		printf("nemai:Parse \tVariable type isn't a registered type on line %d", lexLine);
+		printf("nemai: \tVariable type isn't a registered type on line %d", lexLine);
 		printf("%c", '\n');
 		return ERROR;
 	}
 	
 	if (isASize >= 1) {
-		printf("nemai:Parse \tVariable type is a size type on line %d", lexLine);
+		printf("nemai: \tVariable type is a size type on line %d", lexLine);
 		printf("%c", '\n');
 		return ERROR;
 	}
@@ -445,7 +483,7 @@ STATUS addVar(symtable **pcurNode, TOKEN *type, TOKEN *name) {
 	(*lastEntry)->type = curTypelist;
 		
 	if (name->token != word) {
-		printf("nemai:Parse \tVariable name is reserved or forbidden on line %d", lexLine);
+		printf("nemai: \tVariable name is reserved or forbidden on line %d", lexLine);
 		printf("%c", '\n');
 		return ERROR;
 	}
@@ -467,7 +505,7 @@ STATUS addVar(symtable **pcurNode, TOKEN *type, TOKEN *name) {
 	}
 	
 	if (nameCheckFail > 0) {
-		printf("nemai:Parse \tAttempt to redefine a variable on line %d", lexLine);
+		printf("nemai: \tAttempt to redefine a variable on line %d", lexLine);
 		printf("%c", '\n');
 		return ERROR;
 	}
@@ -483,7 +521,96 @@ STATUS addVar(symtable **pcurNode, TOKEN *type, TOKEN *name) {
 	(*lastEntry)->name = realloc((*lastEntry)->name, sizeof(char) * (nchars + 2));
 	(*lastEntry)->name[nchars + 1] = '\0';
 
-	(*lastEntry)->category = tvar;
+	(*lastEntry)->size = 8;
+				
+	(curNode->nthings)++;
+	return SUCCESS;
+}
+
+STATUS addStruct(symtable **pcurNode, TOKEN *protName, TOKEN *name) {
+	symtable *curNode = *(pcurNode);
+	typelist *curTypelist = Typelist;
+	
+	symtableEntry **lastEntry = &(curNode->things);
+	for (int i = 0; i < curNode->nthings; i++) {
+		lastEntry = &((*lastEntry)->next);
+	}
+	*lastEntry = (symtableEntry*) malloc(sizeof(symtableEntry));
+	
+	if (protName->token != word) {
+		printf("nemai: \tStruct prototype name used in a struct definition is a registered name or invalid on line %d", lexLine);
+		printf("%c", '\n');
+		return ERROR;
+	}
+		
+	int protNameCheckFail = 0;
+	structTable *structProtPointer;
+
+	structTable **nametester = &StructRoot;
+	while((nametester[0] != (void*) 0) && protNameCheckFail == 0) {
+		if (strcmp((*nametester)->name, protName->symtable) == 0) {
+			protNameCheckFail++;
+			structProtPointer = nametester[0];
+		}
+		nametester = &((*nametester)->next);
+	}
+					
+	if (protNameCheckFail == 0) {
+		printf("nemai: \tStruct prototype name used in a struct definition is not registered on line %d", lexLine);
+		printf("%c", '\n');
+		return ERROR;
+	}
+		
+	(*lastEntry)->type = (void*) structProtPointer;
+		
+	if (name->token != word) {
+		printf("nemai: \tStruct name is reserved or invalid on line %d", lexLine);
+		printf("%c", '\n');
+		return ERROR;
+	}
+		
+	int i = 0;
+	int nameCheckFail = 0;
+	(*lastEntry)->name = malloc(sizeof(char));
+		
+	while((SymtableFamily[i] != (void*) 0) && nameCheckFail == 0) {
+		int nodenthings = SymtableFamily[i]->nthings;
+		symtableEntry *curListEntry = SymtableFamily[i]->things;
+		for (int i = 0; i < nodenthings && nameCheckFail == 0; i++) {
+			if(strcmp(curListEntry->name, name->symtable) == 0) {
+				nameCheckFail++;
+			}
+			curListEntry = curListEntry->next;
+		}
+		i++;
+	}
+	
+	if (nameCheckFail > 0) {
+		printf("nemai: \tAttempt to redefine a struct on line %d", lexLine);
+		printf("%c", '\n');
+		return ERROR;
+	}
+		
+	(*lastEntry)->name[0] = ((char*) (name->symtable))[0];
+	int nchars;
+	for (int i = 1; ((char*) (name->symtable))[i] != '\0'; i++) {
+		(*lastEntry)->name = realloc((*lastEntry)->name, sizeof(char) * (i + 1));
+		(*lastEntry)->name[i] = ((char*) (name->symtable))[i];
+		nchars = i;
+	}
+		
+	(*lastEntry)->name = realloc((*lastEntry)->name, sizeof(char) * (nchars + 2));
+	(*lastEntry)->name[nchars + 1] = '\0';
+
+	structTableEntry *curSizeCheck = structProtPointer->elements;
+	int totalSize = 0;
+	
+	while (curSizeCheck != (void*) 0) {
+		totalSize += curSizeCheck->type->size / 8;
+		curSizeCheck = curSizeCheck->next;
+	}
+	
+	(*lastEntry)->size = totalSize;
 				
 	(curNode->nthings)++;
 	return SUCCESS;
@@ -534,6 +661,10 @@ STATUS Parse() {
 	FunctionRoot = (functionTable*) malloc(sizeof(functionTable));
 	FunctionRoot->next = (void*) 0;
 
+	StructRoot = (structTable*) malloc(sizeof(structTable));
+	StructRoot->next = (void*) 0;
+	StructRoot->elements = (void*) 0;
+	structTable **lastStruct = &StructRoot;
 	
 	for (TOKEN i = Lex(); i.token != eof && i.token != error; i = Lex()) {
 		if (i.token == obracket_block) {
@@ -543,13 +674,13 @@ STATUS Parse() {
 				TOKEN name = Lex();
 				
 				if (type.token == eof || name.token == eof) {
-					printf("nemai:Parse \tFile ended on unfinished variable definition on line %d", lexLine);
+					printf("nemai: \tFile ended on unfinished variable definition on line %d", lexLine);
 					printf("%c", '\n');
 					return ERROR;
 				}
 
 				if (type.token != word || name.token != word) {
-					printf("nemai:Parse \tWrong parameters given to function \"dv\" or given less than required 2 on line %d", lexLine);
+					printf("nemai: \tWrong parameters given to function \"dv\" or given less than required 2 on line %d", lexLine);
 					printf("%c", '\n');
 					return ERROR;
 				}
@@ -558,17 +689,17 @@ STATUS Parse() {
 
 				TOKEN ending = Lex();
 				if (ending.token == eof) {
-					printf("nemai:Parse \tFile ended on unfinished variable definition on line %d", lexLine);
+					printf("nemai: \tFile ended on unfinished variable definition on line %d", lexLine);
 					printf("%c", '\n');
 					return ERROR;
 				} else if (ending.token != cbracket_block) {
-					printf("nemai:Parse \tFunction \"dv\" can only take 2 arguments, but given more on line %d", lexLine);
+					printf("nemai: \tFunction \"dv\" can only take 2 arguments, but given more on line %d", lexLine);
 					printf("%c", '\n');
 					return ERROR;
 				}
 			} else if (node.token == df) {
 				if (curNode != SymtableRoot) {
-					printf("nemai:Parse \tAttempt to define a function inside of a function on line %d", lexLine);
+					printf("nemai: \tAttempt to define a function inside of a function on line %d", lexLine);
 					printf("%c", '\n');
 					return ERROR;
 				}
@@ -609,7 +740,7 @@ STATUS Parse() {
 				
 				TOKEN fName = Lex();
 				if (fName.token != word) {
-					printf("nemai:Parse \tFunction name is reserved or forbidden on line %d", lexLine);
+					printf("nemai: \tFunction name is reserved or forbidden on line %d", lexLine);
 					printf("%c", '\n');
 					return ERROR;
 				}
@@ -623,9 +754,8 @@ STATUS Parse() {
 					nametester = &((*nametester)->next);
 				}
 					
-
 				if (nameCheckFail > 0) {
-					printf("nemai:Parse \tAttempt to redefine a function on line %d", lexLine);
+					printf("nemai: \tAttempt to redefine a function on line %d", lexLine);
 					printf("%c", '\n');
 					return ERROR;
 				}
@@ -668,7 +798,7 @@ STATUS Parse() {
 
 				TOKEN bracketCheck = Lex();
 				if (bracketCheck.token != obracket_sub) {
-					printf("nemai:Parse \tMissing parameter list in function definition on line %d", lexLine);
+					printf("nemai: \tMissing parameter list in function definition on line %d", lexLine);
 					printf("%c", '\n');
 					return ERROR;
 				}
@@ -732,7 +862,7 @@ STATUS Parse() {
 					}
 	
 					if (nameFound == 0) {
-						printf("nemai:Parse \tAttempt to assign to an unknown variable on line %d", lexLine);
+						printf("nemai: \tAttempt to assign to an unknown variable on line %d", lexLine);
 						printf("%c", '\n');
 						return ERROR;
 					}
@@ -758,17 +888,374 @@ STATUS Parse() {
 				ParseFamily = (parsetable**) realloc(ParseFamily, sizeof(parsetable*) * (ParseFamilyMembers + 2));
 				ParseFamily[ParseFamilyMembers] = curParseNode;
 				ParseFamily[ParseFamilyMembers + 1] = (void*) 0;
+			} else if (node.token == ga) {
+				TOKEN varName = Lex();
+
+				int indexer = 0;
+				int nameFound = 0;
+		
+				while((SymtableFamily[indexer] != (void*) 0) && nameFound == 0) {
+					int nodenthings = SymtableFamily[indexer]->nthings;
+					symtableEntry *curListEntry = SymtableFamily[indexer]->things;
+					for (int j = 0; j < nodenthings && nameFound == 0; j++) {
+						if(strcmp(curListEntry->name, varName.symtable) == 0) {
+							nameFound++;
+						}
+						curListEntry = curListEntry->next;
+					}
+					indexer++;
+				}
+	
+				if (nameFound == 0) {
+					printf("nemai: \tAttempt to get address of an unknown variable on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+
+				int parselast = 0;
+				for (int j = 0; curParseNode->things[j]->state != 0; j++) {
+					parselast = j + 1;
+				}
+
+				curParseNode->things = (parsetable**) realloc(curParseNode->things, sizeof(parsetable*) * (parselast + 2));
+				curParseNode->things[parselast + 1] = (parsetable*) malloc(sizeof(parsetable));
+				curParseNode->things[parselast + 1]->state = 0;
+
+				curParseNode->things[parselast]->state = 1;
+				curParseNode->things[parselast]->things = (void*) 0;
+				curParseNode->things[parselast]->type = nga;
+
+				curParseNode->things[parselast]->args = (char**) malloc(sizeof(char*));
+				((char**) (curParseNode->things[parselast]->args))[0] = (char*) varName.symtable;
+				
+				Lex();
+			} else if (node.token == sp) {
+				TOKEN token = Lex();
+
+				if (token.token != word) {
+					printf("nemai: \tStruct prototype name is not valid or reserved on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+
+				int nameCheckFail = 0;
+
+				structTable **nametester = &StructRoot;
+				while((nametester[0]->next != (void*) 0) && ((*nametester) != (void*) 0) && nameCheckFail != 1) {
+					if (strcmp(nametester[0]->name, token.symtable) == 0) nameCheckFail++;
+					nametester = &(nametester[0]->next);
+				}
+					
+				if (nameCheckFail > 0) {
+					printf("nemai: \tAttempt to redefine a struct prototype on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+
+				lastStruct[0]->name = token.symtable;
+
+				token = Lex();
+				
+				structTableEntry **lastStructEntry = &(lastStruct[0]->elements);
+				
+				while (token.token != cbracket_block) {
+					if (token.token != word) {
+						printf("nemai: \tStruct prototype element type name is not valid or reserved on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+					
+					int isAType = 0;
+					typelist *curTypelist = Typelist;
+	
+					for (int i = 0; i < nTypes; i++) {
+						if (strcmp(token.symtable, curTypelist->name) == 0) {
+							i = nTypes;
+							isAType++;
+						} else {
+							curTypelist = curTypelist->next;
+						}
+					}
+					
+					if (isAType < 1) {
+						printf("nemai: \tStruct prototype element type is not a registered type on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					lastStructEntry[0] = (structTableEntry*) malloc(sizeof(structTableEntry));
+					
+					lastStructEntry[0]->type = curTypelist;
+
+					token = Lex();
+
+					if (token.token != word) {
+						printf("nemai: \tStruct prototype element name is not valid or reserved on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					int nameCheckFail = 0;
+
+					structTableEntry **nametester = &(lastStruct[0]->elements);
+					while((nametester[0]->next != (void*) 0) && ((*nametester) != (void*) 0) && nameCheckFail == 0) {
+						if (strcmp((*nametester)->name, token.symtable) == 0) nameCheckFail++;
+						nametester = &((*nametester)->next);
+					}
+					
+					if (nameCheckFail > 0) {
+						printf("nemai: \tAttempt to create an struct prototype element with already existing name on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					lastStructEntry[0]->name = token.symtable;
+
+					lastStructEntry = &(lastStructEntry[0]->next);
+					token = Lex();
+				}
+
+				lastStruct[0]->next = (structTable*) malloc(sizeof(structTable));
+				lastStruct[0]->next->next = (void*) 0;
+				lastStruct = &(lastStruct[0]->next);
+			} else if (node.token == ds) {
+				TOKEN structPrototype = Lex();
+				TOKEN name = Lex();
+				
+				if (structPrototype.token == eof || name.token == eof) {
+					printf("nemai: \tFile ended on unfinished structure variable definition on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+
+				if (structPrototype.token != word || name.token != word) {
+					printf("nemai: \tWrong parameters given to function \"ds\" or given less than required 2 on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+				
+				if (addStruct(&curNode, &structPrototype, &name) == ERROR) return ERROR;
+
+				TOKEN ending = Lex();
+				if (ending.token == eof) {
+					printf("nemai: \tFile ended on unfinished structure variable definition on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				} else if (ending.token != cbracket_block) {
+					printf("nemai: \tFunction \"ds\" can only take 2 arguments, but given more on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+			} else if (node.token == rse) {
+				/* (rse strctname strct-elem) */
+				/* (rse strct-prot strct-elem adr) */
+				TOKEN sec = Lex();
+				TOKEN elemName = Lex();
+				TOKEN adr = Lex();
+
+				if (adr.token == cbracket_block) {
+					if (sec.token != word) {
+						printf("nemai: \tAttempt to read from a struct element from invalid struct name on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+					
+					int parselast = 0;
+					for (int i = 0; curParseNode->things[i]->state != 0; i++) {
+						parselast = i + 1;
+					}
+
+					curParseNode->things = (parsetable**) realloc(curParseNode->things, sizeof(parsetable*) * (parselast + 2));
+					curParseNode->things[parselast + 1] = (parsetable*) malloc(sizeof(parsetable));
+					curParseNode->things[parselast + 1]->state = 0;
+
+					curParseNode->things[parselast]->state = 1;
+					curParseNode->things[parselast]->things = (void*) 0;
+
+					curParseNode->things[parselast]->type = nrsen;
+
+					curParseNode->things[parselast]->args = (void*) malloc(sizeof(void*) * 2);
+			
+					int i = 0;
+					int nameCheckFail = 0;
+					symtableEntry *structEntry;
+		
+					while((SymtableFamily[i] != (void*) 0) && nameCheckFail == 0) {
+						int nodenthings = SymtableFamily[i]->nthings;
+						symtableEntry *curListEntry = SymtableFamily[i]->things;
+						for (int i = 0; i < nodenthings && nameCheckFail == 0; i++) {
+							if(strcmp(curListEntry->name, sec.symtable) == 0) {
+								nameCheckFail++;
+								structEntry = curListEntry;
+							}
+							curListEntry = curListEntry->next;
+						}
+						i++;
+					}
+	
+					if (nameCheckFail == 0) {
+						printf("nemai: \tAttempt to read from a struct element of an unknown struct on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					((symtableEntry**) (curParseNode->things[parselast]->args))[0] = structEntry;
+
+					if (elemName.token != word) {
+						printf("nemai: \tAttempt to read from a struct element with an invalid name on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					nameCheckFail = 0;
+
+					structTableEntry **nametester = &(((structTable*) (structEntry->type))->elements);
+					while(nametester[0] != (void*) 0 && nameCheckFail == 0) {
+						if (strcmp((*nametester)->name, elemName.symtable) == 0) nameCheckFail++;
+						nametester = &((*nametester)->next);
+					}
+					
+					if (nameCheckFail == 0) {
+						printf("nemai: \tAttempt to read from a struct element that does not exist in the struct prototype on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					((char**) (curParseNode->things[parselast]->args))[1] = elemName.symtable;
+				} else {
+					if (adr.token != obracket_block && adr.token != number) {
+						printf("nemai: \tInvalid or wrong amount of parameters given to the \"rse\" function on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					if (sec.token != word) {
+						printf("nemai: \tAttempt to read from a struct element from invalid struct prototype name on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					if (elemName.token != word) {
+						printf("nemai: \tAttempt to read from a struct element with an invalid name on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					if (adr.token != number) lexOBracket++; else {
+						lexNum++;
+						lexNumData = ((int64_t*) adr.symtable)[0];
+					}
+					
+					int parselast = 0;
+					for (int i = 0; curParseNode->things[i]->state != 0; i++) {
+						parselast = i + 1;
+					}
+
+					curParseNode->things = (parsetable**) realloc(curParseNode->things, sizeof(parsetable*) * (parselast + 2));
+					curParseNode->things[parselast + 1] = (parsetable*) malloc(sizeof(parsetable));
+					curParseNode->things[parselast + 1]->state = 0;
+
+					curParseNode = curParseNode->things[parselast];
+					curParseNode->state = 1;
+					curParseNode->type = nrsea;
+
+					curParseNode->things = (parsetable**) malloc(sizeof(parsetable*));
+					curParseNode->things[0] = (parsetable*) malloc(sizeof(parsetable));
+					curParseNode->things[0]->state = 0;
+
+					int ParseFamilyMembers = 0;
+					while (ParseFamily[ParseFamilyMembers] != (void*) 0) {
+						ParseFamilyMembers++;
+					}
+
+					ParseFamily = (parsetable**) realloc(ParseFamily, sizeof(parsetable*) * (ParseFamilyMembers + 2));
+					ParseFamily[ParseFamilyMembers] = curParseNode;
+					ParseFamily[ParseFamilyMembers + 1] = (void*) 0;
+
+					structTable *curStruct = StructRoot;
+
+					for (; curStruct->next != (void*) 0 && curStruct != (void*) 0 && strcmp((char*) sec.symtable, curStruct->name) != 0; curStruct = curStruct->next) ;
+					if (curStruct == (void*) 0 || curStruct->next == (void*) 0) {
+						printf("nemai: \tStruct prototype name used in a struct element access attempt is not registered on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					curParseNode->args = (void*) malloc(sizeof(void*) * 2);
+					((structTable**) (curParseNode->args))[0] = curStruct;
+
+					int nameCheckFail = 0;
+					structTableEntry **nametester = &(curStruct->elements);
+					while(nametester[0] != (void*) 0 && nameCheckFail == 0) {
+						if (strcmp((*nametester)->name, elemName.symtable) == 0) nameCheckFail++;
+						nametester = &((*nametester)->next);
+					}
+					
+					if (nameCheckFail == 0) {
+						printf("nemai: \tAttempt to read from a struct element that does not exist in the struct prototype on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+					
+					((char**) (curParseNode->args))[1] = elemName.symtable;
+				}
+			} else if (node.token == ase) {
+				TOKEN *sec = (TOKEN*) malloc(sizeof(TOKEN));
+				*sec = Lex();
+				TOKEN *elemName = (TOKEN*) malloc(sizeof(TOKEN));
+				*elemName = Lex();
+
+				if (sec->token != word) {
+					printf("nemai: \tAttempt to write to a struct element with invalid first parameter on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+
+				if (elemName->token != word) {
+					printf("nemai: \tAttempt to write to a struct element with an invalid name on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+
+				int parselast = 0;
+				for (int i = 0; curParseNode->things[i]->state != 0; i++) {
+					parselast = i + 1;
+				}
+
+				curParseNode->things = (parsetable**) realloc(curParseNode->things, sizeof(parsetable*) * (parselast + 2));
+				curParseNode->things[parselast + 1] = (parsetable*) malloc(sizeof(parsetable));
+				curParseNode->things[parselast + 1]->state = 0;
+
+				curParseNode = curParseNode->things[parselast];
+				curParseNode->state = 1;
+				curParseNode->type = nasea;
+
+				curParseNode->things = (parsetable**) malloc(sizeof(parsetable*));
+				curParseNode->things[0] = (parsetable*) malloc(sizeof(parsetable));
+				curParseNode->things[0]->state = 0;
+
+				int ParseFamilyMembers = 0;
+				while (ParseFamily[ParseFamilyMembers] != (void*) 0) {
+					ParseFamilyMembers++;
+				}
+
+				ParseFamily = (parsetable**) realloc(ParseFamily, sizeof(parsetable*) * (ParseFamilyMembers + 2));
+				ParseFamily[ParseFamilyMembers] = curParseNode;
+				ParseFamily[ParseFamilyMembers + 1] = (void*) 0;
+
+				curParseNode->args = (void*) malloc(sizeof(void*) * 2);
+				((TOKEN**) (curParseNode->args))[0] = sec;
+				((TOKEN**) (curParseNode->args))[1] = elemName;
 			} else if (node.token <= word) {
 				// add support for user made functios later and dont forget it
-				printf("nemai:Parse \tAttempt to call an undefined function on line %d", lexLine);
+				printf("nemai: \tAttempt to call an undefined function on line %d", lexLine);
 				printf("%c", '\n');
 				return ERROR;
 			}
-
 		} else if (i.token == number) {
 			if (curParseNode->type == nret) {
 				if (curParseNode->things[0]->state != 0) {
-					printf("nemai:Parse \tAttempt to return more than one value on line %d", lexLine);
+					printf("nemai: \tAttempt to return more than one value on line %d", lexLine);
 					printf("%c", '\n');
 					return ERROR;
 				}
@@ -791,7 +1278,7 @@ STATUS Parse() {
 			((int64_t*) (curParseNode->things[parselast]->args))[0] = *((int64_t*) i.symtable);
 			
 		} else if (i.token == cbracket_block) {
-			if (curParseNode->type != nret && curParseNode->type != nadd && curParseNode->type != nsub && curParseNode->type != nmult && curParseNode->type != ndivide && curParseNode->type != nav) {
+			if (curParseNode->type != nret && curParseNode->type != nadd && curParseNode->type != nsub && curParseNode->type != nmult && curParseNode->type != ndivide && curParseNode->type != nav && curParseNode->type != nrsea && curParseNode->type != nasea) {
 				int SymtableFamilyMembers = 0;
 				while (SymtableFamily[SymtableFamilyMembers] != (void*) 0) {
 					SymtableFamilyMembers++;
@@ -808,7 +1295,100 @@ STATUS Parse() {
 				}
 				
 				if (nThings < 2) {
-					printf("nemai:Parse \tAttempt to perform a math operation on less than 2 arguments on line %d", lexLine);
+					printf("nemai: \tAttempt to perform a math operation on less than 2 arguments on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				}
+			}
+
+			if (curParseNode->type == nasea) {
+				int nThings = 0;
+				for (int i = 0; curParseNode->things[i]->state != 0; i++) {
+					nThings = i + 1;
+				}
+
+				if (nThings == 0) {
+					printf("nemai: \tAttempt to assign to a struct element with 0 arguments on line %d", lexLine);
+					printf("%c", '\n');
+					return ERROR;
+				} else if (nThings == 1) {
+					TOKEN sec = *(((TOKEN**) curParseNode->args)[0]);
+					TOKEN elemName = *(((TOKEN**) curParseNode->args)[1]);
+					
+					int i = 0;
+					int nameCheckFail = 0;
+					symtableEntry *structEntry;
+		
+					while((SymtableFamily[i] != (void*) 0) && nameCheckFail == 0) {
+						int nodenthings = SymtableFamily[i]->nthings;
+						symtableEntry *curListEntry = SymtableFamily[i]->things;
+						for (int i = 0; i < nodenthings && nameCheckFail == 0; i++) {
+							if(strcmp(curListEntry->name, sec.symtable) == 0) {
+								nameCheckFail++;
+								structEntry = curListEntry;
+							}
+							curListEntry = curListEntry->next;
+						}
+						i++;
+					}
+	
+					if (nameCheckFail == 0) {
+						printf("nemai: \tAttempt to read from a struct element of an unknown struct on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					((symtableEntry**) (curParseNode->args))[0] = structEntry;
+
+					nameCheckFail = 0;
+
+					structTableEntry **nametester = &(((structTable*) (structEntry->type))->elements);
+					while(nametester[0] != (void*) 0 && nameCheckFail == 0) {
+						if (strcmp((*nametester)->name, elemName.symtable) == 0) nameCheckFail++;
+						nametester = &((*nametester)->next);
+					}
+					
+					if (nameCheckFail == 0) {
+						printf("nemai: \tAttempt to read from a struct element that does not exist in the struct prototype on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					((char**) (curParseNode->args))[1] = elemName.symtable;
+
+					curParseNode->type = nasen;
+				} else if (nThings == 2) {
+					TOKEN sec = *(((TOKEN**) curParseNode->args)[0]);
+					TOKEN elemName = *(((TOKEN**) curParseNode->args)[1]);
+
+					structTable *curStruct = StructRoot;
+
+					for (; curStruct->next != (void*) 0 && curStruct != (void*) 0 && strcmp((char*) sec.symtable, curStruct->name) != 0; curStruct = curStruct->next) ;
+					if (curStruct == (void*) 0 || curStruct->next == (void*) 0) {
+						printf("nemai: \tStruct prototype name used in a struct element access attempt is not registered on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+
+					curParseNode->args = (void*) malloc(sizeof(void*) * 2);
+					((structTable**) (curParseNode->args))[0] = curStruct;
+
+					int nameCheckFail = 0;
+					structTableEntry **nametester = &(curStruct->elements);
+					while(nametester[0] != (void*) 0 && nameCheckFail == 0) {
+						if (strcmp((*nametester)->name, elemName.symtable) == 0) nameCheckFail++;
+						nametester = &((*nametester)->next);
+					}
+					
+					if (nameCheckFail == 0) {
+						printf("nemai: \tAttempt to read from a struct element that does not exist in the struct prototype on line %d", lexLine);
+						printf("%c", '\n');
+						return ERROR;
+					}
+					
+					((char**) (curParseNode->args))[1] = elemName.symtable;
+				} else {
+					printf("nemai: \tToo many arguments given to the struct element assign function (3+) on line %d", lexLine);
 					printf("%c", '\n');
 					return ERROR;
 				}
@@ -838,7 +1418,7 @@ STATUS Parse() {
 			}
 	
 			if (nameFound == 0) {
-				printf("nemai:Parse \tAttempt to use an unknown variable on line %d", lexLine);
+				printf("nemai: \tAttempt to use an unknown variable on line %d", lexLine);
 				printf("%c", '\n');
 				return ERROR;
 			}
@@ -868,14 +1448,14 @@ STATUS LexSetup(char *filename) {
 	lexLine = 1;
 	
 	if (file == NULL) {
-		printf("nemai:LexSetup \tFile doesn't exist or couldn't be opened");
+		printf("nemai: \tFile doesn't exist or couldn't be opened");
 		printf("%c", '\n');
 		return ERROR;
 	}
 
 	char c = fgetc(file);
 	if (c == EOF) {
-		printf("nemai:LexSetup \tFile is empty");
+		printf("nemai: \tFile is empty");
 		printf("%c", '\n');
 		return ERROR;
 	}
@@ -901,28 +1481,164 @@ void GenAsmMovRaxRspD32(int32_t d32) {
 	osText += 8;
 }
 
-void GenAsmMovRspD32Rax(int32_t d32) {
+void GenAsmMovRegplusregReg(const char *reg_dest1, const char *reg_dest2, const char *reg_data, char size) {
+	char modrm = 0x00 | (*reg_data << 3) | 0b100;
+	char sib = 0x00 | (*reg_dest1 << 3) | *reg_dest2;
+
+	switch (size) {
+	case 1:
+		__asm__ ("nop");
+		char opcode = MOV_REG_RM - 1;
+		fwrite(&opcode, 1, 1, out);
+		fwrite(&modrm, 1, 1, out);
+		fwrite(&sib, 1, 1, out);
+
+		textSize += 3;
+		osText += 3;
+
+		break;
+	case 2:
+		fwrite(&PREFIX_16B, 1, 1, out);
+		fwrite(&MOV_REG_RM, 1, 1, out);
+		fwrite(&modrm, 1, 1, out);
+		fwrite(&sib, 1, 1, out);
+
+		textSize += 4;
+		osText += 4;
+
+		break;
+	case 4:
+		fwrite(&MOV_REG_RM, 1, 1, out);
+		fwrite(&modrm, 1, 1, out);
+		fwrite(&sib, 1, 1, out);
+
+		textSize += 3;
+		osText += 3;
+
+		break;
+	case 8:
+		fwrite(&REX_W, 1, 1, out);
+		fwrite(&MOV_REG_RM, 1, 1, out);
+		fwrite(&modrm, 1, 1, out);
+		fwrite(&sib, 1, 1, out);
+
+		textSize += 4;
+		osText += 4;
+		
+		break;
+	default:
+		break;
+	}
+}
+
+void GenAsmMovRspD32Rax(int32_t d32, char size) {
 	char modrm = 0b10000100;
 	char sib = 0b00100100;
-			
-	fwrite(&REX_W, 1, 1, out);
+
+	if (size == 8) {
+		fwrite(&REX_W, 1, 1, out);
+		textSize++;
+		osText++;
+	}
+	
 	fwrite(&MOV_RM_REG, 1, 1, out);
 	fwrite(&modrm, 1, 1, out);
 	fwrite(&sib, 1, 1, out);
 	fwrite(&d32, 4, 1, out); 
 
-	textSize += 8;
-	osText += 8;
+	textSize += 7;
+	osText += 7;
 }
 
-void GenAsmMov(int64_t Value) {
-	char opcode = MOV_IMM_REG + REG_AX;
-	int64_t *retValue = (int64_t*) malloc(sizeof(int64_t));
-	*retValue = Value;
+void GenAsmMovxzRspD32Rax(int32_t d32, char bsize) {
+	char modrm = 0b10000100;
+	char sib = 0b00100100;
+
+	switch (bsize) {
+	case 1:
+		fwrite(&MOVZX_RM8_REG, 2, 1, out);
+		fwrite(&modrm, 1, 1, out);
+		fwrite(&sib, 1, 1, out);
+		fwrite(&d32, 4, 1, out);
+
+		textSize += 8;
+		osText += 8;
+
+		break;
+	case 2:
+		fwrite(&MOVZX_RM16_REG, 2, 1, out);
+		fwrite(&modrm, 1, 1, out);
+		fwrite(&sib, 1, 1, out);
+		fwrite(&d32, 4, 1, out);
+
+		textSize += 8;
+		osText += 8;
+
+		break;
+	case 4:
+		GenAsmMovRspD32Rax(d32, 4);
+		break;
+	case 8:
+		GenAsmMovRspD32Rax(d32, 8);
+		break;
+	default:
+		break;
+	}
+}
+
+void GenAsmMovxzMemregRegplusreg(char size, const char *reg_dest, const char *reg1, const char *reg2) {
+	char modrm = 0x00 | (*reg_dest << 3) | 0b100;
+	char sib = 0x00 | (*reg1 << 3) | *reg2;
+	
+	switch (size) {
+	case 1:
+		fwrite(&MOVZX_RM8_REG, 2, 1, out);
+		fwrite(&modrm, 1, 1, out);
+		fwrite(&sib, 1, 1, out);
+
+		textSize += 4;
+		osText += 4;
+
+		break;
+	case 2:
+		fwrite(&MOVZX_RM16_REG, 2, 1, out);
+		fwrite(&modrm, 1, 1, out);
+		fwrite(&sib, 1, 1, out);
+
+		textSize += 4;
+		osText += 4;
+
+		break;
+	case 4:
+		fwrite(&MOV_RM_REG, 1, 1, out);
+		fwrite(&modrm, 1, 1, out);
+		fwrite(&sib, 1, 1, out);
+
+		textSize += 3;
+		osText += 3;
+
+		break;
+	case 8:
+		fwrite(&REX_W, 1, 1, out);
+		fwrite(&MOV_RM_REG, 1, 1, out);
+		fwrite(&modrm, 1, 1, out);
+		fwrite(&sib, 1, 1, out);
+
+		textSize += 4;
+		osText += 4;
+
+		break;
+	default:
+		break;
+	}
+}
+
+void GenAsmMov(int64_t Value, const char *reg) {
+	char opcode = MOV_IMM_REG + *reg;
 			
 	fwrite(&REX_W, 1, 1, out);
 	fwrite(&opcode, 1, 1, out);
-	fwrite(retValue, 8, 1, out);
+	fwrite(&Value, 8, 1, out);
 
 	textSize += 10;
 	osText += 10;
@@ -1032,6 +1748,22 @@ void GenAsmXchg(const char *rm, const char *rm2) {
 	osText += 3;
 }
 
+void GenAsmLea(const char *reg_dest, const char *reg_address, int32_t d32) {
+	if (*reg_address == REG_SP) {
+		char modrm = (0b10000000 | (*reg_dest << 3)) | *reg_address;
+		char sib = 0b00100100;
+
+		fwrite(&REX_W, 1, 1, out);
+		fwrite(&LEA, 1, 1, out);
+		fwrite(&modrm, 1, 1, out);
+		fwrite(&sib, 1, 1, out);
+		fwrite(&d32, 4, 1, out);
+
+		textSize += 8;
+		osText += 8;
+	}
+}	
+
 STATUS GenAsm(parsetable *table) {
 	int nChildren = 0;
 	for (int i = 0; table->things[i]->state != 0; i++) {
@@ -1061,7 +1793,20 @@ STATUS GenAsm(parsetable *table) {
 
 			ToRead->isProcessed = 1;
 			curScope = ToRead;
-			GenAsmSubImmReg(&REG_SP, ToRead->nthings * 8);
+
+			int elemsSize = 0;
+			symtableEntry *curSizeCheck = ToRead->things;
+
+			while (curSizeCheck != (void*) 0) {
+				if (curSizeCheck->size % 8 == 0) {
+					elemsSize += curSizeCheck->size;
+				} else {
+					elemsSize += (curSizeCheck->size + (8 - (curSizeCheck->size % 8)));
+				}
+				curSizeCheck = curSizeCheck->next;
+			}
+						      
+			GenAsmSubImmReg(&REG_SP, elemsSize);
 
 			SymtableFamily = (symtable**) realloc(SymtableFamily, sizeof(symtable*) * 3);
 			SymtableFamily[1] = ToRead;
@@ -1069,18 +1814,30 @@ STATUS GenAsm(parsetable *table) {
 			
 			GenAsm(table->things[i]);
 			break;
-		case nret:
+		case nret: {
 			GenAsm(table->things[i]);
 
-			//printf("\n%d", curScope->nthings);
-			GenAsmAddImmReg(&REG_SP, curScope->nthings * 8);
+			int elemsSize = 0;
+			symtableEntry *curSizeCheck = curScope->things;
+
+			while (curSizeCheck != (void*) 0) {
+				if (curSizeCheck->size % 8 == 0) {
+					elemsSize += curSizeCheck->size;
+				} else {
+					elemsSize += (curSizeCheck->size + (8 - (curSizeCheck->size % 8)));
+				}
+				curSizeCheck = curSizeCheck->next;
+			}
+			
+			GenAsmAddImmReg(&REG_SP, elemsSize);
 			fwrite(&RET, 1, 1, out);
 
 			textSize++;
 			osText++;
 			break;
+		}
 		case nnum:
-			GenAsmMov(((int64_t*) (table->things[i]->args))[0]);
+			GenAsmMov(((int64_t*) (table->things[i]->args))[0], &REG_AX);
 			break;
 		case nadd:
 			GenAsm(table->things[i]);
@@ -1094,7 +1851,7 @@ STATUS GenAsm(parsetable *table) {
 		case ndivide:
 			GenAsm(table->things[i]);
 			break;
-		case nrv:
+		case nrv: {
 			/* Clang complains something about declarations being just after labels sooo here is literally nothing yay */
 			__asm__ ("nop");
 		
@@ -1104,22 +1861,65 @@ STATUS GenAsm(parsetable *table) {
 				varOffset += SymtableFamily[i]->nPushes * 8;
 				
 				for (symtableEntry *curThing = SymtableFamily[i]->things; curThing != (void*) 0 && curThing->next != (void*) 0; curThing = curThing->next) {
-					varOffset += 8;
+					if (curThing->size % 8 == 0) {
+						varOffset += curThing->size;
+					} else {
+						varOffset += (curThing->size + (8 - (curThing->size % 8)));
+					}
 				}
 			}
 
 			symtableEntry *curThing = curScope->things;
 			for (; strcmp(curThing->name, ((char**) (table->things[i]->args))[0]) != 0; curThing = curThing->next) ;
-			for (; curThing->next != (void*) 0; curThing = curThing->next) {
-				varOffset += 8;
+
+			curThing = curThing->next;
+			
+			for (; curThing != (void*) 0; curThing = curThing->next) {
+				if (curThing->size % 8 == 0) {
+					varOffset += curThing->size;
+				} else {
+					varOffset += (curThing->size + (8 - (curThing->size % 8)));
+				}
 			}
 
 			varOffset += curScope->nPushes * 8;
-			
-			//printf("\nOffset seem to be %d", varOffset);
 
-			GenAsmMovRspD32Rax(varOffset);
+			GenAsmMovRspD32Rax(varOffset, 8);
 			break;
+		}
+		case nga: {
+			__asm__ ("nop");
+		
+			int varOffset = 0;
+
+			for (int i = 0; SymtableFamily[i] != curScope; i++) {
+				varOffset += SymtableFamily[i]->nPushes * 8;
+				
+				for (symtableEntry *curThing = SymtableFamily[i]->things; curThing != (void*) 0 && curThing->next != (void*) 0; curThing = curThing->next) {
+					if (curThing->size % 8 == 0) {
+						varOffset += curThing->size;
+					} else {
+						varOffset += (curThing->size + (8 - (curThing->size % 8)));
+					}
+				}
+			}
+
+			symtableEntry *curThing = curScope->things;
+			for (; strcmp(curThing->name, ((char**) (table->things[i]->args))[0]) != 0; curThing = curThing->next) ;
+			for (; curThing != (void*) 0; curThing = curThing->next) {
+				if (curThing->size % 8 == 0) {
+					varOffset += curThing->size;
+				} else {
+					varOffset += (curThing->size + (8 - (curThing->size % 8)));
+				}
+			}
+
+			varOffset += curScope->nPushes * 8;
+			varOffset -= 8;
+
+			GenAsmLea(&REG_AX, &REG_SP, varOffset);
+			break;
+		}
 		case nav:
 			GenAsm(table->things[i]);
 		
@@ -1129,25 +1929,84 @@ STATUS GenAsm(parsetable *table) {
 				navVarOffset += SymtableFamily[i]->nPushes * 8;
 				
 				for (symtableEntry *curThing = SymtableFamily[i]->things; curThing != (void*) 0 && curThing->next != (void*) 0; curThing = curThing->next) {
-					navVarOffset += 8;
+					if (curThing->size % 8 == 0) {
+						navVarOffset += curThing->size;
+					} else {
+						navVarOffset += (curThing->size + (8 - (curThing->size % 8)));
+					}
 				}
 			}
 
 			symtableEntry *navCurThing = curScope->things;
 			for (; strcmp(navCurThing->name, ((char**) (table->things[i]->args))[0]) != 0; navCurThing = navCurThing->next) ;
-			for (; navCurThing->next != (void*) 0; navCurThing = navCurThing->next) {
-				navVarOffset += 8;
+			
+			navCurThing = navCurThing->next;
+			
+			for (; navCurThing != (void*) 0; navCurThing = navCurThing->next) {
+				if (navCurThing->size % 8 == 0) {
+					navVarOffset += navCurThing->size;
+				} else {
+					navVarOffset += (navCurThing->size + (8 - (navCurThing->size % 8)));
+				}
 			}
 
 			navVarOffset += curScope->nPushes * 8;
 
 			GenAsmMovRaxRspD32(navVarOffset);
 			break;
+		case nrsen:
+			__asm__ ("nop");
+			int varOffset = 0;
+
+			for (int i = 0; SymtableFamily[i] != curScope; i++) {
+				varOffset += SymtableFamily[i]->nPushes * 8;
+				
+				for (symtableEntry *curThing = SymtableFamily[i]->things; curThing != (void*) 0 && curThing->next != (void*) 0; curThing = curThing->next) {
+					if (curThing->size % 8 == 0) {
+						varOffset += curThing->size;
+					} else {
+						varOffset += (curThing->size + (8 - (curThing->size % 8)));
+					}
+				}
+			}
+
+			symtableEntry *curThing = curScope->things;
+			for (; strcmp(curThing->name, ((symtableEntry**) table->things[i]->args)[0]->name) != 0; curThing = curThing->next) ;
+
+			curThing = curThing->next;
+			
+			for (; curThing != (void*) 0; curThing = curThing->next) {
+				if (curThing->size % 8 == 0) {
+					varOffset += curThing->size;
+				} else {
+					varOffset += (curThing->size + (8 - (curThing->size % 8)));
+				}
+			}
+
+			varOffset += curScope->nPushes * 8;
+
+			structTableEntry *curElem = ((structTable*) ((symtableEntry**) table->things[i]->args)[0]->type)->elements;
+			for (; strcmp(((char**) table->things[i]->args)[1], curElem->name) != 0; curElem = curElem->next) {
+				varOffset += curElem->type->size / 8;
+			}
+
+			GenAsmMovxzRspD32Rax(varOffset, curElem->type->size / 8);
+			break;
+		case nasen: {
+			GenAsm(table->things[i]);
+			break;
+		}
+		case nrsea:
+			GenAsm(table->things[i]);
+			break;
+		case nasea:
+			GenAsm(table->things[i]);
+			break;
 		default:
 			break;
 		}
 
-		if (table->type == nadd || table->type == nsub || table->type == nmult || table->type == ndivide) {
+		if (table->type == nadd || table->type == nsub || table->type == nmult || table->type == ndivide || table->type == nasea) {
 			GenAsmPush();
 		}
 		
@@ -1204,6 +2063,73 @@ STATUS GenAsm(parsetable *table) {
 	if (table->type == ndf) {
 		SymtableFamily = (symtable**) realloc(SymtableFamily, sizeof(symtable*) * 2);
 		SymtableFamily[1] = (void*) 0;
+	}
+
+	if (table->type == nrsea) {
+		int varOffset = 0;
+				
+		structTableEntry *curElem = ((structTable**) table->args)[0]->elements;
+		for (; strcmp(((char**) table->args)[1], curElem->name) != 0; curElem = curElem->next) {
+			varOffset += curElem->type->size / 8;
+		}
+
+		GenAsmMov(varOffset, &REG_BX);
+		GenAsmMovxzMemregRegplusreg(curElem->type->size / 8, &REG_AX, &REG_AX, &REG_BX);
+	}
+
+	if (table->type == nasen) {
+		__asm__ ("nop");
+		int varOffset = 0;
+
+		for (int i = 0; SymtableFamily[i] != curScope; i++) {
+			varOffset += SymtableFamily[i]->nPushes * 8;
+				
+			for (symtableEntry *curThing = SymtableFamily[i]->things; curThing != (void*) 0 && curThing->next != (void*) 0; curThing = curThing->next) {
+				if (curThing->size % 8 == 0) {
+					varOffset += curThing->size;
+				} else {
+					varOffset += (curThing->size + (8 - (curThing->size % 8)));
+				}
+			}
+		}
+
+		symtableEntry *curThing = curScope->things;
+		for (; strcmp(curThing->name, ((symtableEntry**) table->args)[0]->name) != 0; curThing = curThing->next) ;
+
+		curThing = curThing->next;
+			
+		for (; curThing != (void*) 0; curThing = curThing->next) {
+			if (curThing->size % 8 == 0) {
+				varOffset += curThing->size;
+			} else {
+				varOffset += (curThing->size + (8 - (curThing->size % 8)));
+			}
+		}
+
+		varOffset += curScope->nPushes * 8;
+
+		structTableEntry *curElem = ((structTable*) ((symtableEntry**) table->args)[0]->type)->elements;
+		for (; strcmp(((char**) table->args)[1], curElem->name) != 0; curElem = curElem->next) {
+			varOffset += curElem->type->size / 8;
+		}
+			
+		GenAsmMov(varOffset, &REG_CX);
+		GenAsmMovRegplusregReg(&REG_CX, &REG_SP, &REG_AX, curElem->type->size / 8);
+	}
+
+	if (table->type == nasea) {
+		GenAsmPop(&REG_CX);
+		GenAsmPop(&REG_AX);
+		int varOffset = 0;
+				
+		structTableEntry *curElem = ((structTable**) table->args)[0]->elements;
+		for (; strcmp(((char**) table->args)[1], curElem->name) != 0; curElem = curElem->next) {
+			varOffset += curElem->type->size / 8;
+		}
+
+		GenAsmMov(varOffset, &REG_BX);
+
+		GenAsmMovRegplusregReg(&REG_AX, &REG_BX, &REG_CX, curElem->type->size / 8);
 	}
 	
 	return SUCCESS;
@@ -1331,6 +2257,9 @@ int main(int argc, char **argv) {
 	if (AsmMake(argv[1]) == ERROR) {
 		return ERROR;
 	}
+
+	/* printf("\n%s struct element 1 type: %s, 2: %s, 3: %s", StructRoot->name, StructRoot->elements->type->name, StructRoot->elements->next->type->name, StructRoot->elements->next->next->type->name); */
+	/* printf("\n%s struct element 1 type: %s, 2: %s, 3: %s, with last one name being %s", StructRoot->next->name, StructRoot->next->elements->type->name, StructRoot->next->elements->next->type->name, StructRoot->next->elements->next->next->type->name, StructRoot->next->elements->next->next->name); */
 	
 	printf("%c", '\n');
 	fclose(file);

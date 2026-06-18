@@ -32,15 +32,15 @@ Also no code made by ai
   - [x] Returning from functions
 - [x] Assembly generation
 - [x] Creating object files
-- [ ] Adding more functionality (with just general order)
+- [ ] Adding more functionality (with just the general order)
   - [x] Assigning to variables
   - [x] Math
   - [x] Function returning with a value
   - [ ] Basic optimization from time to time
   - [ ] Calling functions
-  - [ ] Pointers (to be honest i have been thinking that traditional pointers are stupid, what about just make a function that reads data from address from a variable, and function to get an address of a variable, no need for a literal sky with stars like "int ***whatever", no need for pointer types)
+  - [x] Pointers
   - [ ] Conditionals
-  - [ ] Structs
+  - [x] Structs
   - [ ] Calling functions from a known address
   - [ ] Linking and making executable format (efi)
   - [ ] Precompiler
