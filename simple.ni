@@ -1,25 +1,27 @@
-(sp firstStruct
-    ^64 first
-    ^64 second
-    ^64 third)
+# DOES NOT WORK YET!
+# Although I hope it will in the next commit :)
+# The only thing missing is the function parameter support, which will be added soon
 
-(sp secStruct
-    ^8 first
-    ^16 second
-    ^32 third
-    ^64 fourth)
+(sp SYSTEM_TABLE
+    ^64 Signature
+    ^32 Revision
+    ^32 HeaderSize
+    ^32 CRC32
+    ^32 Reserved)
     
-(df main[^u mimi]
-    (dv ^u miao)
-    (dv ^u diao)
-    (dv ^u xiao)
+(df main [^64 pImageHandle; ^64 pSystemTable]
+    (ret (rsea SYSTEM_TABLE Signature pSystemTable)))
 
-    (ds secStruct myStruct)
-
-    (ase myStruct fourth 4)
-
-    (ret (rse myStruct fourth)))
-
-(df printf_no_scam[]
-    (ret)
+(df printf_no_scam []
+    (ret) # return 2 times to make sure I won't do too much work
     (ret))
+
+# to make me not use 1000 syntaxes
+# kinda inspired by efi docs
+# sp					-> THIS_CASE
+# func					-> ThisCase
+# var					-> thisCase
+# selem	(Struct element)		-> ThisCase
+# vars meant to be used as addresses	-> prefix(p)
+# aas (address as struct)		-> prefix(ps)
+# vars / selems meant to be called	-> prefix(f)

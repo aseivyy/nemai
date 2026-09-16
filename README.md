@@ -8,24 +8,48 @@ The reason I made is because if the stars will align and I will make that efi th
 Also don't expect much yet, check the roadmap for what is implemented
 
 # How to build
-No makefile for now since kind of useless with just one file
 
-1. Just compile the only c file, example `clang main.c`
+## Dependencies:
+- clang
+- git (optional but reccomended)
+
+## Steps:
+1. Clone the repository
+
+```sh
+git clone https://github.com/aseivyy/nemai.git
+```
+
+2. Build
+
+```sh
+make
+```
+
+The generated file is `./nemai`
+
+# How to install
+
+Run `sudo ./install.sh` after building. You can delete the repo after
 
 # How to use
-It takes just one and only argument, which is a file name, example `./a.out simple.ni`  
+It can compile just one file at a time, which can be done with `nemai simple.ni`  
 
-The output will be the same file as up here, but with ".obj" extension, in coff format (it actually is a valid one, works perfectly with objdump / lld-link, tested with efi as a target)
+The output will have the name of provided file, but with an additional ".obj" extension, and itself be in the coff object format
 
-# Bugs
-No bugs, I am testing things 10000 times to make sure I won't have to touch whatever is the thing that I made for as long as possible  
+If you wish to skip the object file generation (basically only check for errors), then use the -n flag, for example `nemai -n simple.ni`
+
+# Bugs / issues
+I try to test as many times as possible, however if was commited then it means it worked at least there
+
+The source code only started having comments when I was finishing doing structs as I found out how to align them to look fine in emacs a bit too late, so it may be not really readable
 
 Also no code made by ai
 
 # Roadmap (for juuust the next 1000000 years)
 
-- [x] Lexer
-- [x] Parser
+- [x] Basic Lexer
+- [x] Basic parser
   - [x] Variable definitions
   - [x] Function definitions
   - [x] Function body
@@ -36,16 +60,16 @@ Also no code made by ai
   - [x] Assigning to variables
   - [x] Math
   - [x] Function returning with a value
-  - [ ] Basic optimization from time to time
+  - [x] Basic optimization from time to time
   - [ ] Calling functions
   - [x] Pointers
   - [ ] Conditionals
   - [x] Structs
   - [ ] Calling functions from a known address
   - [ ] Linking and making executable format (efi)
-  - [ ] Precompiler
-    - [ ] Comments
-    - [ ] Headers
+  - [x] Comments
+  - [ ] Headers / using multiple files at once
+  - [ ] Strings
   - [ ] Floats
   - [ ] Negative values
   - [ ] probably moreee but still a long time until here
