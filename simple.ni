@@ -1,7 +1,3 @@
-# DOES NOT WORK YET!
-# Although I hope it will in the next commit :)
-# The only thing missing is the function parameter support, which will be added soon
-
 (sp SYSTEM_TABLE
     ^64 Signature
     ^32 Revision
@@ -25,3 +21,9 @@
 # vars meant to be used as addresses	-> prefix(p)
 # aas (address as struct)		-> prefix(ps)
 # vars / selems meant to be called	-> prefix(f)
+
+(df xiao [^64 one; ^64 two; ^64 three; ^64 fourth; ^64 fifth]
+    (dv ^64 diao)
+    (ret diao)
+    (ret one)
+    (ret two))

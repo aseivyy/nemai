@@ -41,11 +41,17 @@ int GetVarsSize() {
 	SymTableEntry *sizeChecker = curSymNode->things;
 
 	while (sizeChecker != (void*) 0) {
+		if (sizeChecker->type == tParam) {
+			sizeChecker = sizeChecker->next;
+			continue;
+		}
+		
 		if (sizeChecker->size % 8 == 0) {
 			totalSize += sizeChecker->size;
 		} else {
 			totalSize += sizeChecker->size + (8 - (sizeChecker->size % 8));
 		}
+		
 		sizeChecker = sizeChecker->next;
 	}
 
@@ -53,13 +59,15 @@ int GetVarsSize() {
 }
 
 int GetVarOffset(char *name) {
-	int varOffset = 0;
+	int64_t varOffset = 0;
 	SymTableEntry *sizeChecker;
 
 	for (int i = 0; symTableFamily[i] != curSymNode; i++) {
 		varOffset += symTableFamily[i]->nPushes * 8;
 
 		for (sizeChecker = symTableFamily[i]->things; sizeChecker != (void*) 0; sizeChecker = sizeChecker->next) {
+			if (sizeChecker->type == tParam) continue;
+			
 			if (sizeChecker->size % 8 == 0) {
 				varOffset += sizeChecker->size;
 			} else {
@@ -67,11 +75,16 @@ int GetVarOffset(char *name) {
 			}
 		}
 	}
-
+	
 	varOffset += curSymNode->nPushes * 8;
 	sizeChecker = curSymNode->things;
 
 	while (sizeChecker != (void*) 0 && strcmp(name, sizeChecker->name) != 0) {
+		if (sizeChecker->type == tParam) {
+			sizeChecker = sizeChecker->next;
+			continue;
+		}
+
 		if (sizeChecker->size % 8 == 0) {
 			varOffset += sizeChecker->size;
 		} else {
@@ -80,8 +93,15 @@ int GetVarOffset(char *name) {
 
 		sizeChecker = sizeChecker->next;
 	}
-	
-	return varOffset;
+
+	if (sizeChecker->type == tParam) {
+		int64_t paramOffset = GetVarsSize();
+		for (SymTableEntry *paramSizeChecker = curSymNode->things; paramSizeChecker != sizeChecker; paramSizeChecker = paramSizeChecker->next) paramOffset += 8;
+
+		return paramOffset + 8;
+	} else {
+		return varOffset;
+	}
 }
 
 void GenPeObjProcess(ParseTable *curProcessed) {
@@ -114,6 +134,25 @@ void GenPeObjProcess(ParseTable *curProcessed) {
 			AddNewSymFamilyMem(symTableRoot->children);
 		}
 
+		for (int i = 1; i <= ((FunctionTable**) curProcessed->args)[0]->nParams && i <= 4; i++) {
+			char curArgReg;
+			switch (i) {
+			case 1:
+				curArgReg = REG_CX;
+				break;
+			case 2:
+				curArgReg = REG_DX;
+				break;
+			case 3:
+				curArgReg = REG_R8;
+				break;
+			default:
+				curArgReg = REG_R9;
+			}
+				
+			GenBinMov(REG_SP, curArgReg, i * 8, 8);			
+		}
+		
 		int scopeVarSize = GetVarsSize();
 		if (scopeVarSize != 0) GenBinSub(REG_SP, 0, scopeVarSize, 8);
 		

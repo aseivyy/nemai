@@ -5,7 +5,7 @@
 
 typedef enum NodeType_e { nret, nadd, nsub, nmult, ndivide, nca, /* <= Without "args" in the struct */ ndf, nnum, nav, nrv, nga, naa, nase, nasea, nrse, nrsea, nroot } NodeType;
 
-typedef enum SymTableEntryType_e { tVar, tStruct } SymTableEntryType;
+typedef enum SymTableEntryType_e { tVar, tParam, tStruct } SymTableEntryType;
 
 typedef struct typelist_s {
 	char* name;

@@ -9,9 +9,17 @@
 #define REG_BP 5
 #define REG_SI 6
 #define REG_DI 7
+#define REG_R8 8
+#define REG_R9 9
 
 #define REG_AX_OFFSET REG_AX + 100
 #define REG_DI_OFFSET REG_DI + 100
+
+#define REX_W 		0b01001000
+#define REX_REG 	0b01000100
+#define REX_INDEX 	0b01000010
+#define REX_RM		0b01000001
+#define REX_BASE 	0b01000001
 
 #define BIN_PUSH 0x50
 #define BIN_POP 0x58

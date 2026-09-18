@@ -207,7 +207,7 @@ ParseTable* PlaceNewParseChild() {
 	}
 }
 
-Status AddVar(Token *varType, Token *varName) {
+Status AddVar(Token *varType, Token *varName, SymTableEntryType varCategory) {
 	TypeList *foundTypeList = FindType((char*) varType->data);
 	if (foundTypeList == (void*) 0) {
 		printf("nemai: \tVariable type isn't a registered type on line %d\n", lexLine);
@@ -222,7 +222,7 @@ Status AddVar(Token *varType, Token *varName) {
 
 	newThing->arg = foundTypeList;
 	newThing->size = foundTypeList->size;
-	newThing->type = tVar;
+	newThing->type = varCategory;
 
 	return SUCCESS;
 }
@@ -361,7 +361,7 @@ Status Parse() {
 				if (paramType.token != cbracket_sub) {
 					Token paramName = Lex();
 					while (paramType.token == word && paramName.token == word) {
-						if (AddVar(&paramType, &paramName) == ERROR) return ERROR;
+						if (AddVar(&paramType, &paramName, tParam) == ERROR) return ERROR;
 						placeLoc->nParams++;
 
 						paramType = Lex();
@@ -385,7 +385,7 @@ Status Parse() {
 					return ERROR;
 				}
 
-				if (AddVar(&varType, &varName) == ERROR) return ERROR;
+				if (AddVar(&varType, &varName, tVar) == ERROR) return ERROR;
 
 				Lex();
 
