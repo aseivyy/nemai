@@ -96,6 +96,7 @@ int GetVarOffset(char *name) {
 
 	if (sizeChecker->type == tParam) {
 		int64_t paramOffset = GetVarsSize();
+		paramOffset += curSymNode->nPushes * 8;
 		for (SymTableEntry *paramSizeChecker = curSymNode->things; paramSizeChecker != sizeChecker; paramSizeChecker = paramSizeChecker->next) paramOffset += 8;
 
 		return paramOffset + 8;
@@ -104,8 +105,35 @@ int GetVarOffset(char *name) {
 	}
 }
 
+int64_t GetNParseChildren(ParseTable *parent) {
+	int64_t nChildren = 0;
+	for (ParseTable *i = parent->children; i != (void*) 0; i = i->next) nChildren++;
+	return nChildren;
+}
+
+int64_t GetStackSize(SymTable *endTable) {
+	int64_t size = 0;
+	
+	for (int i = 0; i == 0 || symTableFamily[i - 1] != endTable; i++) {
+		size += symTableFamily[i]->nPushes * 8;
+
+		for (SymTableEntry *sizeChecker = symTableFamily[i]->things; sizeChecker != (void*) 0; sizeChecker = sizeChecker->next) {
+			if (sizeChecker->type == tParam) continue;
+			
+			if (sizeChecker->size % 8 == 0) {
+				size += sizeChecker->size;
+			} else {
+				size += sizeChecker->size + (8 - (sizeChecker->size % 8));
+			}
+		}
+	}
+
+	return size;
+}
+
 void GenPeObjProcess(ParseTable *curProcessed) {
 	int nChildren = 0;
+	int64_t caStackChange = 0;
 	
 	switch (curProcessed->type) {
 	case ndf: {
@@ -150,7 +178,7 @@ void GenPeObjProcess(ParseTable *curProcessed) {
 				curArgReg = REG_R9;
 			}
 				
-			GenBinMov(REG_SP, curArgReg, i * 8, 8);			
+			GenBinMov(REG_SP, curArgReg, i * 8, 8);
 		}
 		
 		int scopeVarSize = GetVarsSize();
@@ -163,8 +191,19 @@ void GenPeObjProcess(ParseTable *curProcessed) {
 		GenBinMov(REG_AX, 0, *((int64_t*) (curProcessed->args)), sNum);
 		break;
 	}
+	case nca: {
+		caStackChange += GetNParseChildren(curProcessed) * 8;
+		if ((GetStackSize(curSymNode) + caStackChange) % 16 == 0) caStackChange += 8;
+		
+		curSymNode->nPushes += caStackChange / 8;
+		
+		GenBinSub(REG_SP, 0, caStackChange, 8);
+		break;
+	}
 	default: break;
 	}
+
+	int64_t caCurArg = 0;
 
 	ParseTable *curProcessedChild = curProcessed->children;
 	while (curProcessedChild != (void*) 0) {
@@ -185,6 +224,31 @@ void GenPeObjProcess(ParseTable *curProcessed) {
 			break;
 		case nasea:
 			GenBinPush(REG_AX);
+			break;
+		case nca: {
+			switch (caCurArg) {
+			case 0 :
+				GenBinMov(REG_DI, REG_AX, 0, 0);
+				break;
+			case 1:
+				GenBinMov(REG_CX, REG_AX, 0, 0);
+				break;
+			case 2:
+				GenBinMov(REG_DX, REG_AX, 0, 0);
+				break;
+			case 3:
+				GenBinMov(REG_R8, REG_AX, 0, 0);
+				break;
+			case 4:
+				GenBinMov(REG_R9, REG_AX, 0, 0);
+				break;
+			default:
+				GenBinMov(REG_SP, REG_AX, (caCurArg - 1) * 8, 8);
+			}
+			
+			caCurArg++;
+			break;
+		}
 		default: break;
 		}
 
@@ -262,6 +326,11 @@ void GenPeObjProcess(ParseTable *curProcessed) {
 		break;
 	case nrsea:		
 		GenBinMov(REG_AX, REG_AX_OFFSET, ((int64_t*) curProcessed->args)[0], ((int64_t*) curProcessed->args)[1]);
+		break;
+	case nca:
+		GenBinCall(REG_DI);
+		GenBinAdd(REG_SP, 0, caStackChange, 8);
+		curSymNode->nPushes -= caStackChange / 8;
 		break;
 	case nret: {
 		int scopeVarSize = GetVarsSize();

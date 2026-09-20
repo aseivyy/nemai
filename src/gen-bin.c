@@ -216,6 +216,15 @@ void GenBinMov(char reg_dest, char reg_src, int64_t data, char sReg) {
 
 		return;
 	}
+
+	opcode = BIN_MOV_REG_RM;
+	char modrm = 0b11000000 | (reg_dest << 3) | reg_src;
+	rex |= REX_W;
+	
+	fwrite(&rex, 1, 1, out);
+	fwrite(&opcode, 1, 1, out);
+	fwrite(&modrm, 1, 1, out);
+	sText += 3;
 }
 
 void GenBinAdd(char reg_dest, char reg_sec, int64_t data, char sData) {
@@ -331,3 +340,14 @@ void GenBinDiv(char reg) {
 	fwrite(&modrm, 1, 1, out);
 	sText += 3;
 }
+
+void GenBinCall(char reg) {
+	char opcode = BIN_CALL;
+	char modrm = 0b11010000 | reg;
+
+	fwrite(&opcode, 1, 1, out);
+	fwrite(&modrm, 1, 1, out);
+
+	sText += 2;
+}
+	

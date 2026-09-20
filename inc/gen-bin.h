@@ -24,6 +24,7 @@
 #define BIN_PUSH 0x50
 #define BIN_POP 0x58
 #define BIN_RET 0xC3
+#define BIN_CALL 0xFF
 
 #define BIN_MUL_RAX_REG 0xF7
 #define BIN_DIV_RAX_REG 0xF7
@@ -61,5 +62,6 @@ void GenBinAdd(char reg_dest, char reg_sec, int64_t data, char sData);
 void GenBinSub(char reg_dest, char reg_src, int64_t data, char sData);
 void GenBinMul(char reg);
 void GenBinDiv(char reg);
+void GenBinCall(char reg);
 
 #endif

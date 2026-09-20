@@ -11,6 +11,7 @@ Also don't expect much yet, check the roadmap for what is implemented
 
 ## Dependencies:
 - clang
+- make
 - git (optional but reccomended)
 
 ## Steps:
@@ -65,7 +66,7 @@ Also no code made by ai
   - [x] Pointers
   - [ ] Conditionals
   - [x] Structs
-  - [ ] Calling functions from a known address
+  - [x] Calling functions from a known address
   - [ ] Linking and making executable format (efi)
   - [x] Comments
   - [ ] Headers / using multiple files at once

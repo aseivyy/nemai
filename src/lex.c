@@ -52,6 +52,7 @@ Token Lex() {
 	if (c == '#') {
 		c = fgetc(in);
 		while (c != '\n' && c != EOF) c = fgetc(in);
+		lexLine++;
 		return Lex();
 	}
 
