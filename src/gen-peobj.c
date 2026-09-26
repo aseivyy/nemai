@@ -192,20 +192,47 @@ void GenPeObjProcess(ParseTable *curProcessed) {
 		break;
 	}
 	case nca: {
-		caStackChange += GetNParseChildren(curProcessed) * 8;
-		if ((GetStackSize(curSymNode) + caStackChange) % 16 == 0) caStackChange += 8;
+		int64_t nNcaChildren = GetNParseChildren(curProcessed);
+		if (nNcaChildren > 5) caStackChange += (nNcaChildren - 5) * 8;
+
+		if ((GetStackSize(curSymNode) + caStackChange) % 16 == 0) {
+			caStackChange += 8;
+			GenBinPush(REG_AX);
+		}
 		
-		curSymNode->nPushes += caStackChange / 8;
-		
-		GenBinSub(REG_SP, 0, caStackChange, 8);
 		break;
 	}
 	default: break;
 	}
 
-	int64_t caCurArg = 0;
+	int64_t caCurArg = 1;
 
 	ParseTable *curProcessedChild = curProcessed->children;
+	if (curProcessed->type == nca) {
+		/* Reverse the order of nca children */
+		
+		ParseTable *elemsArray = (void*) 0;
+		ParseTable **listLooper = &(curProcessed->children);
+		int arraySize = 0;
+
+		for (; curProcessedChild != (void*) 0; arraySize++) {
+			elemsArray = realloc(elemsArray, sizeof(ParseTable) * (arraySize + 1));
+			elemsArray[arraySize] = *curProcessedChild;
+			free(curProcessedChild);
+			curProcessedChild = curProcessedChild->next;
+		}
+		
+		*listLooper = &(elemsArray[arraySize - 1]);
+		for (int i = 1; i < arraySize; i++) {
+		        listLooper[0]->next = &elemsArray[arraySize - i - 1];
+			listLooper = &(listLooper[0]->next);
+		}
+
+		listLooper[0]->next = (void*) 0;
+	}
+
+	curProcessedChild = curProcessed->children;
+
 	while (curProcessedChild != (void*) 0) {
 		GenPeObjProcess(curProcessedChild);
 
@@ -226,15 +253,10 @@ void GenPeObjProcess(ParseTable *curProcessed) {
 			GenBinPush(REG_AX);
 			break;
 		case nca: {
-			switch (caCurArg) {
+			/* argument number as in source code, because on the tree it is reversed */
+			int64_t literalArgIndex = GetNParseChildren(curProcessed) - caCurArg;
+			switch (literalArgIndex) {
 			case 0 :
-				GenBinMov(REG_DI, REG_AX, 0, 0);
-				break;
-			case 1:
-				GenBinMov(REG_CX, REG_AX, 0, 0);
-				break;
-			case 2:
-				GenBinMov(REG_DX, REG_AX, 0, 0);
 				break;
 			case 3:
 				GenBinMov(REG_R8, REG_AX, 0, 0);
@@ -243,7 +265,8 @@ void GenPeObjProcess(ParseTable *curProcessed) {
 				GenBinMov(REG_R9, REG_AX, 0, 0);
 				break;
 			default:
-				GenBinMov(REG_SP, REG_AX, (caCurArg - 1) * 8, 8);
+				/* rcx or rdx (args 1 and 2) may be overwritten by other functions, so it must be saved some other way until the end, and args 5+ need to be on stack */
+				GenBinPush(REG_AX);
 			}
 			
 			caCurArg++;
@@ -328,9 +351,14 @@ void GenPeObjProcess(ParseTable *curProcessed) {
 		GenBinMov(REG_AX, REG_AX_OFFSET, ((int64_t*) curProcessed->args)[0], ((int64_t*) curProcessed->args)[1]);
 		break;
 	case nca:
-		GenBinCall(REG_DI);
-		GenBinAdd(REG_SP, 0, caStackChange, 8);
-		curSymNode->nPushes -= caStackChange / 8;
+		if (GetNParseChildren(curProcessed) >= 2) GenBinPop(REG_CX);
+		if (GetNParseChildren(curProcessed) >= 3) GenBinPop(REG_DX);
+		GenBinSub(REG_SP, 0, 32, 8);
+		GenBinCall(REG_AX);
+		GenBinAdd(REG_SP, 0, caStackChange + 32, 8);
+
+		if ((GetStackSize(curSymNode) + caStackChange) % 16 == 0) curSymNode->nPushes--;
+		
 		break;
 	case nret: {
 		int scopeVarSize = GetVarsSize();
